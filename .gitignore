@@ -17,4 +17,3 @@ public/generated
 *.log
 .vscode
 .idea
-tsconfig.tsbuildinfo
