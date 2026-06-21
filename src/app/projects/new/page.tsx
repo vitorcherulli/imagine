@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export default async function NewProjectPage() {
   const { userId } = await auth();
   if (!userId) return null;
-  const [projects, avatars] = await Promise.all([
+  const [projects, avatars, projectDna] = await Promise.all([
     db
       .select()
       .from(schema.projects)
@@ -20,6 +20,11 @@ export default async function NewProjectPage() {
       .from(schema.avatars)
       .where(eq(schema.avatars.userId, userId))
       .orderBy(desc(schema.avatars.updatedAt)),
+    db
+      .select()
+      .from(schema.projectDna)
+      .where(eq(schema.projectDna.userId, userId))
+      .orderBy(desc(schema.projectDna.updatedAt)),
   ]);
 
   return (
@@ -33,7 +38,7 @@ export default async function NewProjectPage() {
           </p>
         </header>
         <section className="px-5 py-5">
-          <NewProjectForm avatars={avatars} />
+          <NewProjectForm avatars={avatars} projectDna={projectDna} />
         </section>
       </main>
     </div>

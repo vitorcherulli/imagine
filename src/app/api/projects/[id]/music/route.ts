@@ -4,8 +4,9 @@ import { z } from "zod";
 import { db, schema } from "@/lib/db";
 import { tryUser } from "@/lib/auth";
 import { generateMusic } from "@/lib/openrouter/music";
-import { saveBuffer } from "@/lib/storage";
+import { saveBuffer, deleteMediaByPublicUrl } from "@/lib/storage";
 import { buildMusicPromptDefault } from "@/lib/story-prompts";
+import { resolveProjectIdentityForProject } from "@/lib/project-dna-server";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 900;
@@ -33,8 +34,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const raw = await req.json().catch(() => ({}));
   const parsed = bodySchema.safeParse(raw);
   if (!parsed.success) return NextResponse.json({ error: "Invalid input" }, { status: 400 });
+  const resolvedIdentity = await resolveProjectIdentityForProject(project);
   const prompt =
-    (parsed.data.prompt ?? project.musicPrompt ?? buildMusicPromptDefault(project)).trim();
+    (
+      parsed.data.prompt ??
+      project.musicPrompt ??
+      buildMusicPromptDefault(project, resolvedIdentity || undefined)
+    ).trim();
 
   await db
     .update(schema.projects)
@@ -106,6 +112,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
   const project = await getProject(params.id, userId);
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+  if (project.musicUrl) await deleteMediaByPublicUrl(project.musicUrl);
   await db
     .update(schema.projects)
     .set({ musicUrl: null, musicStatus: "none", updatedAt: new Date() })

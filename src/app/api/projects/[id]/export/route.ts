@@ -2,17 +2,37 @@ import { NextRequest, NextResponse } from "next/server";
 import { and, asc, eq } from "drizzle-orm";
 import { createId } from "@paralleldrive/cuid2";
 import path from "node:path";
-import fs from "node:fs";
+import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import { db, schema } from "@/lib/db";
 import { tryUser } from "@/lib/auth";
-import { absoluteFromPublicUrl, ensureProjectDir, publicUrlFor } from "@/lib/storage";
+import { absoluteFromPublicUrl, ensureProjectDir, mediaFileExists, publicUrlFor, resolveMediaPath, saveBuffer, assertReadableMediaFile } from "@/lib/storage";
+import { isS3Enabled } from "@/lib/s3";
+import os from "node:os";
 import {
-  DEFAULT_EXPORT_RESOLUTION,
-  EXPORT_RESOLUTIONS,
+  buildAssSubtitleContent,
+  buildCaptionSegments,
+  buildKaraokeCaptionSegments,
+  normalizeCaptionMode,
+  parseCaptionLayout,
+} from "@/lib/captions";
+import { writeAssSubtitleFile } from "@/lib/captions-server";
+import {
+  buildExportDownloadFilename,
+  exportStorageFilename,
+} from "@/lib/export-history";
+import {
+  buildCaptionTimelineBlocks,
+  planExportAudio,
+} from "@/lib/cut-pace";
+import {
   concatBlocksWithAudio,
+  createSilentWav,
+  DEFAULT_EXPORT_RESOLUTION,
   getMediaDurationSeconds,
   hasFfmpeg,
   isExportResolutionId,
+  resolveExportResolution,
 } from "@/lib/ffmpeg";
 
 export const dynamic = "force-dynamic";
@@ -25,15 +45,6 @@ async function getOwnedProject(projectId: string, userId: string) {
     .where(and(eq(schema.projects.id, projectId), eq(schema.projects.userId, userId)))
     .limit(1);
   return p ?? null;
-}
-
-function mediaFileExists(publicUrl: string | null | undefined): boolean {
-  if (!publicUrl) return false;
-  try {
-    return fs.existsSync(absoluteFromPublicUrl(publicUrl));
-  } catch {
-    return false;
-  }
 }
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
@@ -61,7 +72,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   } catch {
     // ignore malformed body / url parsing
   }
-  const resolution = EXPORT_RESOLUTIONS[resolutionId];
+  const resolution = resolveExportResolution(resolutionId, project.videoFormat);
 
   const blocks = await db
     .select()
@@ -77,24 +88,18 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     .map((b, index) => ({
       index: index + 1,
       missingVideo: !b.videoUrl,
-      missingAudio: !b.audioUrl,
     }))
-    .filter((b) => b.missingVideo || b.missingAudio);
+    .filter((b) => b.missingVideo);
 
   if (incomplete.length > 0) {
     const summary = incomplete
       .slice(0, 5)
-      .map((b) => {
-        const parts: string[] = [];
-        if (b.missingVideo) parts.push("video");
-        if (b.missingAudio) parts.push("narration");
-        return `block ${b.index} (${parts.join(" + ")})`;
-      })
+      .map((b) => `block ${b.index}`)
       .join(", ");
     const suffix = incomplete.length > 5 ? ` and ${incomplete.length - 5} more` : "";
     return NextResponse.json(
       {
-        error: `Every block needs video and narration before export. Missing: ${summary}${suffix}.`,
+        error: `Every block needs video before export. Missing video: ${summary}${suffix}.`,
         incompleteBlocks: incomplete,
       },
       { status: 400 },
@@ -103,14 +108,14 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const missingFiles: string[] = [];
   for (const [index, block] of blocks.entries()) {
-    if (!mediaFileExists(block.videoUrl)) {
+    if (!(await mediaFileExists(block.videoUrl))) {
       missingFiles.push(`block ${index + 1} video file`);
     }
-    if (!mediaFileExists(block.audioUrl)) {
+    if (block.audioUrl && !(await mediaFileExists(block.audioUrl))) {
       missingFiles.push(`block ${index + 1} narration file`);
     }
   }
-  if (project.musicUrl && !mediaFileExists(project.musicUrl)) {
+  if (project.musicUrl && !(await mediaFileExists(project.musicUrl))) {
     missingFiles.push("background music file");
   }
 
@@ -126,21 +131,41 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     );
   }
 
+  const dir = isS3Enabled()
+    ? path.join(os.tmpdir(), "imagine-export", project.id)
+    : await ensureProjectDir(project.id);
+  await fs.mkdir(dir, { recursive: true });
+
   const segments = await Promise.all(
     blocks.map(async (b) => {
-      const videoPath = absoluteFromPublicUrl(b.videoUrl!);
-      const audioPath = absoluteFromPublicUrl(b.audioUrl!);
+      const videoPath = await resolveMediaPath(b.videoUrl!);
+      await assertReadableMediaFile(videoPath, `Block video (${b.position + 1})`);
+      const audioPlan = planExportAudio(blocks, b);
       let durationSeconds = b.durationSeconds;
-      try {
-        const audioDuration = await getMediaDurationSeconds(audioPath);
-        durationSeconds = Math.max(durationSeconds, audioDuration);
-      } catch {
-        // keep block duration from timeline
+
+      let audioPath: string;
+      let audioTrimStart = 0;
+
+      if (audioPlan) {
+        audioPath = await resolveMediaPath(audioPlan.audioPath);
+        audioTrimStart = audioPlan.audioTrimStart;
+        try {
+          const audioDuration = await getMediaDurationSeconds(audioPath);
+          const available = Math.max(0, audioDuration - audioPlan.audioTrimStart);
+          durationSeconds = Math.max(durationSeconds, Math.min(available, durationSeconds));
+        } catch {
+          // keep block duration from timeline
+        }
+      } else {
+        audioPath = await createSilentWav(
+          path.join(dir, `silent_${b.id}.wav`),
+          durationSeconds,
+        );
       }
 
       const scenePath =
-        b.sceneAudioUrl && mediaFileExists(b.sceneAudioUrl)
-          ? absoluteFromPublicUrl(b.sceneAudioUrl)
+        b.sceneAudioUrl && (await mediaFileExists(b.sceneAudioUrl))
+          ? await resolveMediaPath(b.sceneAudioUrl)
           : null;
 
       return {
@@ -150,11 +175,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         audioVolume: b.audioVolume ?? 100,
         sceneAudioVolume: b.sceneAudioVolume ?? 60,
         durationSeconds,
+        audioTrimStart,
       };
     }),
   );
 
-  const dir = await ensureProjectDir(project.id);
   const exportId = createId();
   const now = new Date();
 
@@ -162,16 +187,44 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     id: exportId,
     projectId: project.id,
     status: "running",
+    resolution: resolution.id,
     createdAt: now,
   });
 
   try {
     const musicPath =
-      project.musicUrl && mediaFileExists(project.musicUrl)
-        ? absoluteFromPublicUrl(project.musicUrl)
+      project.musicUrl && (await mediaFileExists(project.musicUrl))
+        ? await resolveMediaPath(project.musicUrl)
         : null;
 
-    const outputPath = path.join(dir, `final_${resolution.id}.mp4`);
+    const exportFilename = exportStorageFilename(exportId);
+    const outputPath = path.join(dir, exportFilename);
+    const captionMode = normalizeCaptionMode(project.captionMode);
+    const captionLayout = parseCaptionLayout(captionMode);
+    let captionsAssPath: string | null = null;
+    if (captionLayout.enabled) {
+      const blockInputs = buildCaptionTimelineBlocks(
+        blocks,
+        segments.map((s) => s.durationSeconds),
+      );
+      const captionSegments = captionLayout.karaoke
+        ? buildKaraokeCaptionSegments(blockInputs)
+        : buildCaptionSegments(blockInputs);
+      if (captionSegments.length > 0) {
+        const assContent = buildAssSubtitleContent({
+          segments: captionSegments,
+          width: resolution.width,
+          height: resolution.height,
+          position: captionLayout.position,
+          videoFormat: project.videoFormat,
+        });
+        captionsAssPath = await writeAssSubtitleFile(
+          path.join(dir, `captions_${resolution.id}.ass`),
+          assContent,
+        );
+      }
+    }
+
     await concatBlocksWithAudio({
       segments,
       outputPath,
@@ -181,29 +234,51 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       sceneVolume: project.sceneVolume ?? 60,
       masterVolume: project.masterVolume ?? 100,
       resolution: resolution.id,
+      videoFormat: project.videoFormat,
+      captionsAssPath,
     });
 
-    if (!fs.existsSync(outputPath) || fs.statSync(outputPath).size < 1024) {
+    if (!fsSync.existsSync(outputPath) || fsSync.statSync(outputPath).size < 1024) {
       throw new Error("Export finished but the MP4 file is empty or missing.");
     }
 
-    const url = publicUrlFor(outputPath);
+    const url = isS3Enabled()
+      ? await saveBuffer(
+          project.id,
+          null,
+          exportFilename,
+          await fs.readFile(outputPath),
+        )
+      : publicUrlFor(outputPath);
     await db
       .update(schema.exports)
-      .set({ status: "done", finalVideoUrl: url })
+      .set({ status: "done", finalVideoUrl: url, resolution: resolution.id })
       .where(eq(schema.exports.id, exportId));
     await db
       .update(schema.projects)
       .set({ status: "exported", updatedAt: new Date() })
       .where(eq(schema.projects.id, project.id));
 
+    const priorDone = await db
+      .select({ id: schema.exports.id })
+      .from(schema.exports)
+      .where(
+        and(
+          eq(schema.exports.projectId, project.id),
+          eq(schema.exports.status, "done"),
+        ),
+      );
+    const version = priorDone.length + 1;
+
     return NextResponse.json({
       ok: true,
+      exportId,
       finalVideoUrl: url,
       mode: "video",
       resolution: resolution.id,
       resolutionLabel: resolution.label,
-      downloadFilename: `${sanitizeFilename(project.title)}-${resolution.id}.mp4`,
+      version,
+      downloadFilename: buildExportDownloadFilename(project.title, version, resolution.id),
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Export failed";
@@ -213,13 +288,4 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       .where(eq(schema.exports.id, exportId));
     return NextResponse.json({ error: msg }, { status: 500 });
   }
-}
-
-function sanitizeFilename(title: string): string {
-  const cleaned = title
-    .trim()
-    .replace(/[^\w\s-]/g, "")
-    .replace(/\s+/g, "-")
-    .slice(0, 80);
-  return cleaned || "export";
 }

@@ -5,18 +5,25 @@ import { tryUser } from "@/lib/auth";
 import { eq, desc } from "drizzle-orm";
 import { z } from "zod";
 import { projectApiModelsSchema, getDefaultApiModels } from "@/lib/project-api-models";
-
-export const dynamic = "force-dynamic";
+import { serializeProjectAvatarIds } from "@/lib/project-avatars";
+import { assertOwnedProjectDna } from "@/lib/project-dna-server";
+import { getOwnedFolder } from "@/lib/project-library";
 
 const createSchema = z
   .object({
     title: z.string().min(1).max(120),
+    projectDnaId: z.string().nullable().optional(),
     storyDescription: z.string().min(1).max(4000),
     genre: z.string().min(1).max(60),
     visualStyle: z.string().min(1).max(60),
     voiceTone: z.string().min(1).max(60),
     targetDurationSeconds: z.number().int().min(30).max(1800),
+    videoFormat: z.enum(["horizontal", "vertical"]).default("horizontal"),
+    cutPace: z.enum(["calm", "balanced", "dynamic", "hyper"]).default("balanced"),
+    narrationMode: z.enum(["per_scene", "continuous"]).default("per_scene"),
     avatarId: z.string().nullable().optional(),
+    avatarIds: z.array(z.string()).optional(),
+    folderId: z.string().nullable().optional(),
   })
   .merge(projectApiModelsSchema);
 
@@ -46,7 +53,17 @@ export async function POST(req: NextRequest) {
   const id = createId();
   const now = new Date();
   const defaults = getDefaultApiModels();
-  const { avatarId, ...rest } = parsed.data;
+  const { avatarId, avatarIds, projectDnaId, ...rest } = parsed.data;
+  if (projectDnaId) {
+    const dna = await assertOwnedProjectDna(projectDnaId, userId);
+    if (!dna) return NextResponse.json({ error: "Invalid project DNA" }, { status: 400 });
+  }
+  if (parsed.data.folderId) {
+    const folder = await getOwnedFolder(parsed.data.folderId, userId);
+    if (!folder) return NextResponse.json({ error: "Invalid folder" }, { status: 400 });
+  }
+  const normalizedIds = avatarIds ?? (avatarId ? [avatarId] : []);
+  const primaryId = avatarId ?? normalizedIds[0] ?? null;
   await db.insert(schema.projects).values({
     id,
     userId,
@@ -56,7 +73,10 @@ export async function POST(req: NextRequest) {
     videoModel: rest.videoModel ?? defaults.videoModel,
     ttsModel: rest.ttsModel ?? defaults.ttsModel,
     ttsVoice: rest.ttsVoice ?? defaults.ttsVoice,
-    avatarId: avatarId ?? null,
+    avatarId: primaryId,
+    avatarIds: serializeProjectAvatarIds(normalizedIds),
+    projectDnaId: projectDnaId ?? null,
+    folderId: parsed.data.folderId ?? null,
     status: "draft",
     createdAt: now,
     updatedAt: now,

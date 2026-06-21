@@ -4,6 +4,7 @@ import { chatCompletion, extractJson } from "./openrouter/llm";
 import { generateImage } from "./openrouter/images";
 import { downloadToFile, saveBase64, withCacheBuster } from "./storage";
 import { resolveProjectApiModels } from "./project-api-models";
+import { getAspectRatio } from "./video-format";
 import {
   buildEditorialReferencePrompt,
   buildStyleBibleSystemPrompt,
@@ -14,6 +15,11 @@ import {
   type StyleBible,
 } from "./style-bible";
 import type { Project } from "./db/schema";
+import { resolveProjectIdentityForProject } from "./project-dna-server";
+import {
+  avatarReferenceImages,
+  fetchAvatarById,
+} from "./avatar-block";
 
 export class StyleBibleError extends Error {
   constructor(
@@ -48,19 +54,23 @@ export async function generateAndSaveStyleBible(
     throw new StyleBibleError("Story must exist before generating a style bible");
   }
 
-  const characters = project.avatarId
-    ? await db.select().from(schema.avatars).where(eq(schema.avatars.id, project.avatarId)).limit(1)
-    : [];
+  const primaryCharacter = project.avatarId ? await fetchAvatarById(project.avatarId) : null;
+  const resolvedIdentity = await resolveProjectIdentityForProject(project);
 
   const models = resolveProjectApiModels(project);
   const raw = await chatCompletion({
     messages: [
-      { role: "system", content: buildStyleBibleSystemPrompt() },
+      {
+        role: "system",
+        content: buildStyleBibleSystemPrompt(primaryCharacter?.name ?? null),
+      },
       {
         role: "user",
         content: buildStyleBibleUserPrompt({
           project,
-          characters,
+          characters: primaryCharacter ? [primaryCharacter] : [],
+          primaryCharacter,
+          resolvedIdentity: resolvedIdentity || undefined,
           blockSummaries: blocks.map((b) => ({
             position: b.position,
             segmentType: b.segmentType,
@@ -104,15 +114,17 @@ export async function generateAndSaveAnchor(
     throw new StyleBibleError("Style bible must exist before generating the editorial reference");
   }
 
+  const primaryCharacter = project.avatarId ? await fetchAvatarById(project.avatarId) : null;
   const models = resolveProjectApiModels(project);
-  const prompt = buildEditorialReferencePrompt({ project, bible });
+  const prompt = buildEditorialReferencePrompt({ project, bible, primaryCharacter });
+  const avatarRefs = (await avatarReferenceImages(primaryCharacter)) ?? [];
 
-  // No avatar refs — editorial board is abstract; avatars belong in scene keyframes only.
   const img = await generateImage({
     prompt,
     model: models.imageModel,
-    aspectRatio: "16:9",
+    aspectRatio: getAspectRatio(project.videoFormat),
     imageSize: "1K",
+    referenceImages: avatarRefs.length > 0 ? avatarRefs : undefined,
   });
 
   let url: string;

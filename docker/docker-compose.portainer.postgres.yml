@@ -1,0 +1,42 @@
+# ============================================================
+# Imagine V2 — PostgreSQL (Portainer Stack / Docker Swarm)
+# ------------------------------------------------------------
+# Deploy ANTES da stack principal (docker-compose.portainer.yml).
+#
+# Rede overlay: traefik_public
+# Hostname interno: imagine-db:5432
+# ============================================================
+
+version: "3.8"
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    hostname: imagine-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-imagine}
+    volumes:
+      - imagine_postgres_data:/var/lib/postgresql/data
+    networks:
+      - traefik_public
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d imagine"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 10s
+
+volumes:
+  imagine_postgres_data:
+
+networks:
+  traefik_public:
+    external: true
+    name: traefik_public

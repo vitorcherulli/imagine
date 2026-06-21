@@ -4,6 +4,10 @@ import { tryUser } from "@/lib/auth";
 import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { projectApiModelsSchema } from "@/lib/project-api-models";
+import { serializeProjectAvatarIds } from "@/lib/project-avatars";
+import { assertOwnedProjectDna } from "@/lib/project-dna-server";
+import { getOwnedFolder } from "@/lib/project-library";
+import { deleteProjectMedia } from "@/lib/storage";
 
 export const dynamic = "force-dynamic";
 
@@ -51,18 +55,28 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 const patchSchema = z
   .object({
     title: z.string().min(1).max(120).optional(),
+    projectDnaId: z.string().nullable().optional(),
     storyDescription: z.string().min(1).max(4000).optional(),
     genre: z.string().optional(),
     visualStyle: z.string().optional(),
     voiceTone: z.string().optional(),
     targetDurationSeconds: z.number().int().min(30).max(1800).optional(),
+    videoFormat: z.enum(["horizontal", "vertical"]).optional(),
+    cutPace: z.enum(["calm", "balanced", "dynamic", "hyper"]).optional(),
+    narrationMode: z.enum(["per_scene", "continuous"]).optional(),
     status: z.string().optional(),
     avatarId: z.string().nullable().optional(),
+    avatarIds: z.array(z.string()).optional(),
     musicPrompt: z.string().min(1).max(1500).nullable().optional(),
     musicVolume: z.number().int().min(0).max(100).optional(),
     narrationVolume: z.number().int().min(0).max(100).optional(),
     sceneVolume: z.number().int().min(0).max(100).optional(),
     masterVolume: z.number().int().min(0).max(100).optional(),
+    ttsSpeed: z.number().min(0.75).max(1.35).optional(),
+    captionMode: z
+      .enum(["off", "bottom", "center", "bottom-karaoke", "center-karaoke"])
+      .optional(),
+    folderId: z.string().nullable().optional(),
   })
   .merge(projectApiModelsSchema);
 
@@ -77,9 +91,27 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Invalid input" }, { status: 400 });
 
+  if (parsed.data.projectDnaId) {
+    const dna = await assertOwnedProjectDna(parsed.data.projectDnaId, userId);
+    if (!dna) return NextResponse.json({ error: "Invalid project DNA" }, { status: 400 });
+  }
+
+  if (parsed.data.folderId) {
+    const folder = await getOwnedFolder(parsed.data.folderId, userId);
+    if (!folder) return NextResponse.json({ error: "Invalid folder" }, { status: 400 });
+  }
+
+  const patch: Record<string, unknown> = { ...parsed.data, updatedAt: new Date() };
+  if (parsed.data.avatarIds !== undefined) {
+    patch.avatarIds = serializeProjectAvatarIds(parsed.data.avatarIds);
+    if (parsed.data.avatarId === undefined) {
+      patch.avatarId = parsed.data.avatarIds[0] ?? null;
+    }
+  }
+
   await db
     .update(schema.projects)
-    .set({ ...parsed.data, updatedAt: new Date() })
+    .set(patch)
     .where(eq(schema.projects.id, project.id));
 
   return NextResponse.json({ ok: true });
@@ -92,6 +124,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
   const project = await getProject(params.id, userId);
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+  await deleteProjectMedia(project.id);
   await db.delete(schema.projects).where(eq(schema.projects.id, project.id));
   return NextResponse.json({ ok: true });
 }

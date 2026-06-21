@@ -3,9 +3,91 @@
 @tailwind utilities;
 
 @layer base {
-  :root {
+  :root,
+  [data-theme="light"] {
     color-scheme: light;
+    --background: 0 0% 100%;
+    --foreground: 222 47% 11%;
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 46%;
+    --accent: 199 89% 48%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+    --panel: 220 14% 98%;
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 199 89% 48%;
+
+    --timeline-bg: 220 13% 16%;
+    --timeline-track: 220 13% 22%;
+    --timeline-block: 220 13% 30%;
+    --timeline-ruler: 220 13% 18%;
+    --timeline-foreground: 220 13% 95%;
+    --timeline-muted: 220 13% 70%;
+    --timeline-border: 220 13% 8%;
   }
+
+  [data-theme="light-all"] {
+    color-scheme: light;
+    --background: 0 0% 100%;
+    --foreground: 222 47% 11%;
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 46%;
+    --accent: 199 89% 48%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+    --panel: 220 14% 98%;
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 199 89% 48%;
+
+    --timeline-bg: 220 14% 94%;
+    --timeline-track: 220 14% 88%;
+    --timeline-block: 220 14% 82%;
+    --timeline-ruler: 220 14% 90%;
+    --timeline-foreground: 222 47% 11%;
+    --timeline-muted: 220 9% 46%;
+    --timeline-border: 220 13% 78%;
+  }
+
+  [data-theme="dark"] {
+    color-scheme: dark;
+    --background: 222 47% 7%;
+    --foreground: 210 40% 98%;
+    --muted: 220 13% 16%;
+    --muted-foreground: 220 9% 65%;
+    --accent: 199 89% 48%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+    --panel: 220 13% 10%;
+    --border: 220 13% 20%;
+    --input: 220 13% 20%;
+    --ring: 199 89% 48%;
+
+    --timeline-bg: 220 13% 8%;
+    --timeline-track: 220 13% 14%;
+    --timeline-block: 220 13% 22%;
+    --timeline-ruler: 220 13% 11%;
+    --timeline-foreground: 220 13% 95%;
+    --timeline-muted: 220 13% 68%;
+    --timeline-border: 220 13% 5%;
+  }
+
   html,
   body {
     height: 100%;
@@ -22,20 +104,20 @@
 @layer utilities {
   .scrollbar-thin {
     scrollbar-width: thin;
-    scrollbar-color: hsl(220 13% 60%) transparent;
+    scrollbar-color: hsl(var(--timeline-muted) / 0.55) transparent;
   }
   .scrollbar-thin::-webkit-scrollbar {
     height: 8px;
     width: 8px;
   }
   .scrollbar-thin::-webkit-scrollbar-thumb {
-    background: hsl(220 13% 60%);
+    background: hsl(var(--timeline-muted) / 0.55);
     border-radius: 4px;
   }
   .scrollbar-thin::-webkit-scrollbar-track {
     background: transparent;
   }
   .scrollbar-dark::-webkit-scrollbar-thumb {
-    background: hsl(220 13% 35%);
+    background: hsl(var(--timeline-muted) / 0.45);
   }
 }

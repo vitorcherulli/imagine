@@ -3,7 +3,6 @@ import path from "node:path";
 import type { Project, StoryBlock } from "@/lib/db/schema";
 import {
   avatarHintForPrompt,
-  avatarReferenceImages,
   resolveBlockAvatar,
 } from "@/lib/avatar-block";
 import {
@@ -15,21 +14,23 @@ import {
   SEEDANCE_MAX_DURATION,
 } from "@/lib/ffmpeg";
 import { resolveProjectApiModels } from "@/lib/project-api-models";
+import { getAspectRatio } from "@/lib/video-format";
+import { openRouterHeaders } from "@/lib/openrouter/client";
 import { submitVideo, waitForVideo } from "@/lib/openrouter/videos";
 import { buildSceneVisualPrompt, parseStyleBible } from "@/lib/style-bible";
 import {
-  absoluteFromPublicUrl,
-  downloadToFile,
-  ensureProjectDir,
-  publicUrlFor,
+  assertReadableMediaFile,
+  ensureVideoProcessingDir,
   readImageAsDataUrl,
+  saveBuffer,
   withCacheBuster,
 } from "@/lib/storage";
 
 export async function probeAudioDurationSeconds(audioUrl: string | null): Promise<number | null> {
   if (!audioUrl) return null;
   try {
-    const seconds = await getMediaDurationSeconds(absoluteFromPublicUrl(audioUrl));
+    const { resolveMediaPath } = await import("@/lib/storage");
+    const seconds = await getMediaDurationSeconds(await resolveMediaPath(audioUrl));
     return seconds > 0.2 ? seconds : null;
   } catch {
     return null;
@@ -92,7 +93,7 @@ export async function generateBlockVideo(opts: {
     prompt,
     model: models.videoModel,
     duration: clipDuration,
-    aspect_ratio: "16:9",
+    aspect_ratio: getAspectRatio(project.videoFormat),
     resolution: "720p",
     frame_images: firstFrameUrl
       ? [{ url: firstFrameUrl, frame: "first_frame" }]
@@ -103,41 +104,67 @@ export async function generateBlockVideo(opts: {
   const fileUrl = result.unsigned_urls?.[0] ?? result.signed_urls?.[0];
   if (!fileUrl) throw new Error("Video response had no URL");
 
-  const dir = await ensureProjectDir(project.id, block.id);
+  const dir = await ensureVideoProcessingDir(project.id, block.id);
   const rawPath = path.join(dir, "video_raw.mp4");
   const finalPath = path.join(dir, "video.mp4");
   const scenePath = path.join(dir, "scene_audio.m4a");
 
-  await downloadToFile(fileUrl, project.id, block.id, "video_raw.mp4", { withAuth: true });
-
-  let sceneAudioReady = false;
-
-  if (hasFfmpeg()) {
-    // Extract scene audio (ambient/character voice from the AI clip) before fitting,
-    // so we keep the original audio untouched even if the video gets trimmed/looped.
-    sceneAudioReady = await extractAudioFromVideo(rawPath, scenePath).catch(() => false);
-    await fitVideoToDuration(rawPath, finalPath, targetDuration);
-    await fs.unlink(rawPath).catch(() => {});
-  } else {
-    await fs.rename(rawPath, finalPath);
-    let actualDuration = 0;
-    try {
-      actualDuration = await getMediaDurationSeconds(finalPath);
-    } catch {
-      actualDuration = clipDuration;
+  try {
+    const res = await fetch(fileUrl, { headers: openRouterHeaders() });
+    if (!res.ok) throw new Error(`Download failed ${res.status} for ${fileUrl}`);
+    const rawBuf = Buffer.from(await res.arrayBuffer());
+    if (rawBuf.length < 1024) {
+      throw new Error("Downloaded video is empty or too small");
     }
-    const expected = Math.min(targetDuration, SEEDANCE_MAX_DURATION);
-    if (Math.abs(actualDuration - expected) > 0.75) {
-      throw new Error(
-        `Video is ${actualDuration.toFixed(1)}s but narration needs ~${targetDuration.toFixed(1)}s ` +
-          `(clip target: ${expected.toFixed(1)}s). Install ffmpeg, then regenerate.`,
+    await fs.writeFile(rawPath, rawBuf);
+    await assertReadableMediaFile(rawPath, "Downloaded video");
+
+    let sceneAudioReady = false;
+
+    if (hasFfmpeg()) {
+      sceneAudioReady = await extractAudioFromVideo(rawPath, scenePath).catch(() => false);
+      await fitVideoToDuration(rawPath, finalPath, targetDuration);
+      await assertReadableMediaFile(finalPath, "Processed video");
+    } else {
+      await fs.rename(rawPath, finalPath);
+      let actualDuration = 0;
+      try {
+        actualDuration = await getMediaDurationSeconds(finalPath);
+      } catch {
+        actualDuration = clipDuration;
+      }
+      const expected = Math.min(targetDuration, SEEDANCE_MAX_DURATION);
+      if (Math.abs(actualDuration - expected) > 0.75) {
+        throw new Error(
+          `Video is ${actualDuration.toFixed(1)}s but narration needs ~${targetDuration.toFixed(1)}s ` +
+            `(clip target: ${expected.toFixed(1)}s). Install ffmpeg, then regenerate.`,
+        );
+      }
+    }
+
+    const videoUrl = withCacheBuster(
+      await saveBuffer(project.id, block.id, "video.mp4", await fs.readFile(finalPath)),
+    );
+
+    let sceneAudioUrl: string | null = null;
+    if (sceneAudioReady) {
+      await assertReadableMediaFile(scenePath, "Scene audio");
+      sceneAudioUrl = withCacheBuster(
+        await saveBuffer(
+          project.id,
+          block.id,
+          "scene_audio.m4a",
+          await fs.readFile(scenePath),
+        ),
       );
     }
-  }
 
-  return {
-    videoUrl: withCacheBuster(publicUrlFor(finalPath)),
-    durationSeconds: ceilBlockDurationSeconds(targetDuration),
-    sceneAudioUrl: sceneAudioReady ? withCacheBuster(publicUrlFor(scenePath)) : null,
-  };
+    return {
+      videoUrl,
+      durationSeconds: ceilBlockDurationSeconds(targetDuration),
+      sceneAudioUrl,
+    };
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
 }

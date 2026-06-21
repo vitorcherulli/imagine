@@ -16,7 +16,7 @@ export function openRouterHeaders(extra: Record<string, string> = {}): HeadersIn
     Authorization: `Bearer ${key}`,
     "Content-Type": "application/json",
     "HTTP-Referer": referer,
-    "X-Title": "Imagine V2",
+    "X-Title": "Imagine",
     ...extra,
   };
 }

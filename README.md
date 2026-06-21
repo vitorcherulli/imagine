@@ -1,4 +1,4 @@
-# Imagine V2 – Story Timeline App
+# Imagine – Story Timeline App
 
 A focused story-creation web app: describe a story idea, the AI generates narrative blocks, keyframe images, video clips and TTS narration, and you assemble it on a Premiere-Pro-style horizontal timeline. Then export the final video and YouTube metadata.
 
@@ -18,7 +18,6 @@ A focused story-creation web app: describe a story idea, the AI generates narrat
 ## Setup
 
 ```bash
-cd V2
 npm install
 npm run db:migrate
 npm run dev
@@ -26,10 +25,20 @@ npm run dev
 
 `.env.local` is already filled with the keys for development. App runs on `http://localhost:3000`.
 
+## Docker / Portainer
+
+Stacks de exemplo para Swarm + Traefik em [`docker/`](docker/README.md):
+
+- `docker/docker-compose.portainer.minio.yml` — MinIO (servidor de arquivos S3)
+- `docker/docker-compose.portainer.yml` — app (migrator + web)
+- `docker/docker-compose.yml` — MinIO local para dev
+
+**Storage:** o app ainda grava mídia em `public/generated/` (disco). As variáveis `S3_*` já estão nos stacks, mas a integração no código ainda precisa ser feita.
+
 ## Folder layout
 
 ```
-V2/
+imagine/
 ├── src/
 │   ├── app/             # Next.js routes
 │   ├── components/      # UI + Timeline

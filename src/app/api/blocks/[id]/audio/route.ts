@@ -4,6 +4,8 @@ import { getBlockForUser, getLatestBlock, setBlockStatus } from "@/lib/block-hel
 import { generateSpeech, resolveTtsVoice } from "@/lib/openrouter/tts";
 import { saveBuffer, withCacheBuster } from "@/lib/storage";
 import { resolveProjectApiModels } from "@/lib/project-api-models";
+import { parseTtsSpeedFromRequest } from "@/lib/narration-speed-server";
+import { isVisualCutOnly } from "@/lib/cut-pace";
 import {
   ceilBlockDurationSeconds,
   probeAudioDurationSeconds,
@@ -12,12 +14,21 @@ import {
 export const dynamic = "force-dynamic";
 export const maxDuration = 180;
 
-export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const userId = await tryUser();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const owned = await getBlockForUser(params.id, userId);
   if (!owned) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  const ttsSpeed = await parseTtsSpeedFromRequest(req, owned.project);
+
+  if (isVisualCutOnly(owned.block)) {
+    return NextResponse.json(
+      { error: "Visual cuts use narration from the group's lead block" },
+      { status: 400 },
+    );
+  }
 
   await setBlockStatus(params.id, { status: "audio_generating", errorMessage: null });
 
@@ -34,6 +45,7 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
         voice,
         model: models.ttsModel,
         voiceTone: owned.project.voiceTone,
+        speed: ttsSpeed,
       });
       const url = await saveBuffer(
         owned.project.id,

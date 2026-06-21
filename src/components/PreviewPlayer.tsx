@@ -4,6 +4,9 @@ import * as React from "react";
 import type { Block } from "@/components/timeline/types";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { getVideoFormatSpec, type VideoFormat } from "@/lib/video-format";
+import { getCaptionDisplayText, normalizeCaptionMode, parseCaptionLayout, type CaptionMode } from "@/lib/captions";
+import { resolveNarrationPlayback } from "@/lib/cut-pace";
 import { Image as ImageIcon, Maximize2, Minimize2 } from "lucide-react";
 import {
   effectiveMusicGain,
@@ -23,6 +26,8 @@ interface Props {
   narrationVolume?: number;
   sceneVolume?: number;
   masterVolume?: number;
+  videoFormat?: VideoFormat | string | null;
+  captionMode?: CaptionMode | string | null;
 }
 
 export function PreviewPlayer({
@@ -37,7 +42,12 @@ export function PreviewPlayer({
   narrationVolume = 100,
   sceneVolume = 60,
   masterVolume = 100,
+  videoFormat = "horizontal",
+  captionMode = "off",
 }: Props) {
+  const formatSpec = getVideoFormatSpec(videoFormat);
+  const captions = normalizeCaptionMode(captionMode);
+  const captionLayout = parseCaptionLayout(captions);
   const containerRef = React.useRef<HTMLDivElement | null>(null);
   const videoRef = React.useRef<HTMLVideoElement | null>(null);
   const audioRef = React.useRef<HTMLAudioElement | null>(null);
@@ -87,11 +97,53 @@ export function PreviewPlayer({
   blockStartRef.current = blockStart;
   localOffsetRef.current = localOffset;
 
-  const hasNarration = !!activeBlock?.audioUrl;
+  const prevNarrationLeadIdRef = React.useRef<string | null>(null);
+
+  const narrationPlayback = React.useMemo(
+    () => resolveNarrationPlayback(blocks, activeBlock),
+    [blocks, activeBlock],
+  );
+
+  const captionSourceBlock = narrationPlayback?.lead ?? activeBlock;
+  const captionLocalOffset =
+    narrationPlayback && activeBlock
+      ? Math.max(0, currentTime - narrationPlayback.groupStartTime)
+      : localOffset;
+
+  const hasNarration = !!narrationPlayback?.lead.audioUrl;
+
+  const captionText = React.useMemo(() => {
+    if (!captionLayout.enabled || !captionSourceBlock?.narrativeText) return "";
+    return getCaptionDisplayText({
+      mode: captions,
+      narrativeText: captionSourceBlock.narrativeText,
+      localOffsetSeconds: captionLocalOffset,
+      blockDurationSeconds: narrationPlayback?.groupDuration ?? captionSourceBlock.durationSeconds,
+    });
+  }, [
+    captionLayout.enabled,
+    captions,
+    captionSourceBlock,
+    captionLocalOffset,
+    narrationPlayback?.groupDuration,
+  ]);
 
   const advancePastBlock = React.useCallback((start: number, blockDur: number) => {
     const end = start + blockDur;
     const total = totalDurationRef.current;
+    const playback = resolveNarrationPlayback(
+      blocks,
+      activeBlockRef.current,
+    );
+    if (
+      playback &&
+      end < playback.groupStartTime + playback.groupDuration - 0.02 &&
+      end < total - 0.001
+    ) {
+      lastReportedTimeRef.current = end;
+      onTimeChangeRef.current(end);
+      return;
+    }
     if (end >= total - 0.001) {
       onTimeChangeRef.current(total);
       onPauseRef.current();
@@ -99,7 +151,7 @@ export function PreviewPlayer({
     }
     lastReportedTimeRef.current = end;
     onTimeChangeRef.current(end);
-  }, []);
+  }, [blocks]);
 
   React.useEffect(() => {
     const v = videoRef.current;
@@ -114,12 +166,12 @@ export function PreviewPlayer({
   React.useEffect(() => {
     const a = audioRef.current;
     if (!a) return;
-    const desiredSrc = activeBlock?.audioUrl ?? "";
+    const desiredSrc = narrationPlayback?.lead.audioUrl ?? "";
     if (!mediaSrcMatches(a.src, desiredSrc)) {
       a.src = desiredSrc;
       a.load();
     }
-  }, [activeBlock?.audioUrl]);
+  }, [narrationPlayback?.lead.audioUrl, narrationPlayback?.lead.id]);
 
   React.useEffect(() => {
     const s = sceneRef.current;
@@ -149,27 +201,36 @@ export function PreviewPlayer({
       blockOffset: Math.max(0, localOffset),
       globalTime: blockStart + Math.max(0, localOffset),
       hasVideo: !!activeBlock?.videoUrl,
-      hasAudio: !!activeBlock?.audioUrl,
+      hasAudio: hasNarration,
       hasScene: !!activeBlock?.sceneAudioUrl,
       hasMusic: !!musicUrl,
+      narrationTime:
+        narrationPlayback != null
+          ? narrationPlayback.audioOffset + Math.max(0, localOffset)
+          : undefined,
     });
   }, [
     localOffset,
     playing,
     activeBlock?.videoUrl,
-    activeBlock?.audioUrl,
     activeBlock?.sceneAudioUrl,
     blockStart,
     musicUrl,
+    hasNarration,
+    narrationPlayback,
   ]);
 
   // Start media only when play toggles on or the active block changes — NOT on every time tick.
   React.useEffect(() => {
     const blockId = activeBlock?.id ?? null;
+    const narrationLeadId = narrationPlayback?.lead.id ?? null;
     const justStarted = playing && !prevPlayingRef.current;
     const blockChanged = playing && prevBlockIdRef.current !== blockId;
+    const narrationLeadChanged =
+      playing && prevNarrationLeadIdRef.current !== narrationLeadId;
     prevPlayingRef.current = playing;
     prevBlockIdRef.current = blockId;
+    prevNarrationLeadIdRef.current = narrationLeadId;
 
     const v = videoRef.current;
     const a = audioRef.current;
@@ -185,6 +246,14 @@ export function PreviewPlayer({
     }
 
     if (!justStarted && !blockChanged) return;
+    if (blockChanged && !justStarted && !narrationLeadChanged) {
+      const v = videoRef.current;
+      if (v && activeBlock?.videoUrl) {
+        seekVideoForBlock(v, Math.max(0, localOffsetRef.current));
+        v.play().catch(() => {});
+      }
+      return;
+    }
 
     const offset = Math.max(0, localOffsetRef.current);
     const cleanups: Array<() => void> = [];
@@ -203,10 +272,10 @@ export function PreviewPlayer({
       v?.pause();
     }
 
-    if (activeBlock?.audioUrl && a) {
+    if (narrationPlayback?.lead.audioUrl && a) {
       const startNarration = () => {
         try {
-          a.currentTime = offset;
+          a.currentTime = narrationPlayback.audioOffset + Math.max(0, localOffsetRef.current);
         } catch {}
         a.play().catch(() => {});
       };
@@ -247,26 +316,36 @@ export function PreviewPlayer({
     playing,
     activeBlock?.id,
     activeBlock?.videoUrl,
-    activeBlock?.audioUrl,
     activeBlock?.sceneAudioUrl,
+    narrationPlayback?.lead.audioUrl,
+    narrationPlayback?.lead.id,
+    narrationPlayback?.audioOffset,
     musicUrl,
   ]);
 
   // Narration `ended` → next block.
   React.useEffect(() => {
     const a = audioRef.current;
-    if (!a || !activeBlock?.audioUrl) return;
+    if (!a || !narrationPlayback?.lead.audioUrl) return;
 
     function onEnded() {
       if (!playingRef.current) return;
-      const block = activeBlockRef.current;
-      if (!block) return;
-      advancePastBlock(blockStartRef.current, block.durationSeconds);
+      const playback = resolveNarrationPlayback(blocks, activeBlockRef.current);
+      if (!playback) return;
+      const groupEnd = playback.groupStartTime + playback.groupDuration;
+      const total = totalDurationRef.current;
+      if (groupEnd >= total - 0.001) {
+        onTimeChangeRef.current(total);
+        onPauseRef.current();
+        return;
+      }
+      lastReportedTimeRef.current = groupEnd;
+      onTimeChangeRef.current(groupEnd);
     }
 
     a.addEventListener("ended", onEnded);
     return () => a.removeEventListener("ended", onEnded);
-  }, [activeBlock?.id, activeBlock?.audioUrl, advancePastBlock]);
+  }, [blocks, narrationPlayback?.lead.audioUrl, narrationPlayback?.lead.id]);
 
   // Master clock: read narration currentTime via rAF, but throttle React state updates.
   // Never touch audio.currentTime here — that is what caused crackling / slow-motion audio.
@@ -289,23 +368,50 @@ export function PreviewPlayer({
         return;
       }
 
+      const playback = resolveNarrationPlayback(blocks, block);
       const blockDur = block.durationSeconds;
       const local = audio.currentTime;
-      const effectiveEnd = effectivePlaybackEnd(blockDur, audio);
+      const groupGlobal = playback
+        ? playback.groupStartTime + Math.max(0, local)
+        : blockStartRef.current + local;
+      const blockEnd = blockStartRef.current + blockDur;
+      const effectiveEnd = playback
+        ? playback.groupStartTime + playback.groupDuration
+        : effectivePlaybackEnd(blockDur, audio);
+
+      if (
+        groupGlobal >= blockEnd - 0.05 &&
+        playback &&
+        blockEnd < playback.groupStartTime + playback.groupDuration - 0.02
+      ) {
+        advancePastBlock(blockStartRef.current, blockDur);
+        return;
+      }
 
       if (
         audio.ended ||
         (audio.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
-          local >= effectiveEnd - 0.05)
+          groupGlobal >= effectiveEnd - 0.05)
       ) {
-        advancePastBlock(start, blockDur);
+        if (playback) {
+          const groupEnd = playback.groupStartTime + playback.groupDuration;
+          const total = totalDurationRef.current;
+          if (groupEnd >= total - 0.001) {
+            onTimeChangeRef.current(total);
+            onPauseRef.current();
+            return;
+          }
+          lastReportedTimeRef.current = groupEnd;
+          onTimeChangeRef.current(groupEnd);
+          return;
+        }
+        advancePastBlock(blockStartRef.current, blockDur);
         return;
       }
 
-      const global = start + local;
-      if (Math.abs(global - lastReportedTimeRef.current) >= 0.08) {
-        lastReportedTimeRef.current = global;
-        onTimeChangeRef.current(global);
+      if (Math.abs(groupGlobal - lastReportedTimeRef.current) >= 0.08) {
+        lastReportedTimeRef.current = groupGlobal;
+        onTimeChangeRef.current(groupGlobal);
       }
 
       // Video sync at most ~4×/sec — never touch narration/scene audio here.
@@ -313,7 +419,8 @@ export function PreviewPlayer({
         lastVideoSync = now;
         const v = videoRef.current;
         if (v && block.videoUrl && v.readyState >= 2) {
-          softSyncVideoToNarration(v, local);
+          const videoLocal = Math.max(0, groupGlobal - blockStartRef.current);
+          softSyncVideoToNarration(v, videoLocal);
         }
       }
 
@@ -435,13 +542,15 @@ export function PreviewPlayer({
   }
 
   return (
-    <div
-      ref={containerRef}
-      className={cn(
-        "group/preview relative aspect-video w-full overflow-hidden rounded-md bg-black",
-        "fullscreen:flex fullscreen:aspect-auto fullscreen:h-screen fullscreen:w-screen fullscreen:items-center fullscreen:justify-center fullscreen:rounded-none",
-      )}
-    >
+    <div className={cn(formatSpec.previewContainerClass)}>
+      <div
+        ref={containerRef}
+        className={cn(
+          "group/preview relative w-full overflow-hidden rounded-md bg-black",
+          formatSpec.previewAspectClass,
+          "fullscreen:flex fullscreen:aspect-auto fullscreen:h-screen fullscreen:w-screen fullscreen:max-w-none fullscreen:items-center fullscreen:justify-center fullscreen:rounded-none",
+        )}
+      >
       {activeBlock?.videoUrl ? (
         <video
           ref={videoRef}
@@ -469,6 +578,26 @@ export function PreviewPlayer({
       <audio ref={sceneRef} className="hidden" preload="auto" />
       <audio ref={musicRef} className="hidden" loop preload="auto" />
 
+      {captionLayout.enabled && captionText && (
+        <div
+          className={cn(
+            "pointer-events-none absolute inset-x-0 z-10 flex justify-center px-3",
+            captionLayout.position === "center" ? "top-1/2 -translate-y-1/2" : "bottom-10",
+          )}
+        >
+          <p
+            className={cn(
+              "max-w-[92%] text-balance text-center font-medium leading-snug text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.85)]",
+              formatSpec.id === "vertical" ? "text-[11px] sm:text-xs" : "text-xs sm:text-sm",
+            )}
+          >
+            <span className="rounded-md bg-black/55 px-2.5 py-1.5 backdrop-blur-[2px]">
+              {captionText}
+            </span>
+          </p>
+        </div>
+      )}
+
       <Button
         type="button"
         variant="ghost"
@@ -492,6 +621,7 @@ export function PreviewPlayer({
         <span className="font-mono">
           {formatTime(currentTime)} / {formatTime(totalDuration)}
         </span>
+      </div>
       </div>
     </div>
   );
@@ -567,6 +697,7 @@ function seekAllMedia(opts: {
   hasAudio: boolean;
   hasScene: boolean;
   hasMusic: boolean;
+  narrationTime?: number;
 }) {
   const {
     video,
@@ -579,11 +710,12 @@ function seekAllMedia(opts: {
     hasAudio,
     hasScene,
     hasMusic,
+    narrationTime,
   } = opts;
   if (hasVideo && video) seekVideoForBlock(video, blockOffset);
   if (hasAudio && audio) {
     try {
-      audio.currentTime = blockOffset;
+      audio.currentTime = narrationTime ?? blockOffset;
     } catch {}
   }
   if (hasScene && scene) seekSceneAtOffset(scene, blockOffset);

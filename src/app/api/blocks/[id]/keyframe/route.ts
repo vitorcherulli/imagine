@@ -9,6 +9,7 @@ import {
   avatarReferenceImages,
   resolveBlockAvatar,
 } from "@/lib/avatar-block";
+import { getAspectRatio } from "@/lib/video-format";
 import {
   buildSceneVisualPrompt,
   parseStyleBible,
@@ -59,7 +60,7 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
       const img = await generateImage({
         prompt,
         model: models.imageModel,
-        aspectRatio: "16:9",
+        aspectRatio: getAspectRatio(owned.project.videoFormat),
         imageSize: "1K",
         referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
       });

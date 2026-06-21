@@ -14,15 +14,18 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/use-toast";
+import { cn } from "@/lib/utils";
 import {
   emptyStyleBible,
   parseStyleBible,
   STYLE_BIBLE_FIELDS,
   type StyleBible,
 } from "@/lib/style-bible";
+import { getVideoFormatSpec, type VideoFormat } from "@/lib/video-format";
 
 interface Props {
   projectId: string;
+  videoFormat?: VideoFormat | string | null;
   initialBible: string | null;
   initialAnchorUrl: string | null;
   onUpdated?: (next: { styleBible: StyleBible | null; anchorImageUrl: string | null }) => void;
@@ -32,10 +35,12 @@ type Status = "idle" | "saving" | "generating-bible" | "generating-anchor";
 
 export function StyleBibleDialog({
   projectId,
+  videoFormat = "horizontal",
   initialBible,
   initialAnchorUrl,
   onUpdated,
 }: Props) {
+  const formatSpec = getVideoFormatSpec(videoFormat);
   const { toast } = useToast();
   const [open, setOpen] = React.useState(false);
   const [bible, setBible] = React.useState<StyleBible>(
@@ -141,14 +146,16 @@ export function StyleBibleDialog({
           <DialogTitle>Editorial line</DialogTitle>
           <DialogDescription>
             Unifies palette, light and film language across every scene. Each block keeps its own
-            location — scenes look like the same film, not the same place.
+            location — scenes look like the same film, not the same place. When you generate the story,
+            the editorial line is created automatically; use the buttons below to review or regenerate.
+            With a project avatar, the editorial follows that character&apos;s face and style.
           </DialogDescription>
         </DialogHeader>
 
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[280px_1fr]">
           <div className="space-y-2">
             <Label className="text-2xs text-muted-foreground">Editorial reference</Label>
-            <div className="aspect-video w-full overflow-hidden rounded-md border border-border bg-muted/40">
+            <div className={cn("w-full overflow-hidden rounded-md border border-border bg-muted/40", formatSpec.previewAspectClass)}>
               {anchorUrl ? (
                 /* eslint-disable-next-line @next/next/no-img-element */
                 <img

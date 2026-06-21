@@ -64,6 +64,76 @@
       "when": 1750349600000,
       "tag": "0008_location_tag",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1750349700000,
+      "tag": "0009_video_format",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1750349800000,
+      "tag": "0010_captions",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1750349900000,
+      "tag": "0011_thumbnail_mode",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1750350000000,
+      "tag": "0012_project_avatar_ids",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1750350200000,
+      "tag": "0014_cut_pace",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "6",
+      "when": 1750350300000,
+      "tag": "0015_project_dna",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "6",
+      "when": 1750350400000,
+      "tag": "0016_project_folders",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1750350500000,
+      "tag": "0017_export_resolution",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1750350600000,
+      "tag": "0018_cover_avatar",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1750350700000,
+      "tag": "0019_tts_speed",
+      "breakpoints": true
     }
   ]
 }

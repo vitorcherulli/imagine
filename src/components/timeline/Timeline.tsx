@@ -13,6 +13,7 @@ import {
 import { TimelinePlayhead } from "./TimelinePlayhead";
 import { TimelineVolumeSlider } from "./TimelineVolumeSlider";
 import type { Block, AvatarLookup } from "./types";
+import { getVideoFormatSpec, type VideoFormat } from "@/lib/video-format";
 
 export interface TimelineVolumes {
   master: number;
@@ -38,14 +39,16 @@ interface Props {
   onVolumesChange: (patch: Partial<TimelineVolumes>) => void;
   projectAvatarId?: string | null;
   avatarMap?: AvatarLookup;
+  videoFormat?: VideoFormat | string | null;
 }
 
 const TRACK_LABEL_WIDTH = 108;
 const RULER_HEIGHT = 24;
-const VIDEO_ROW = 64;
 const TRACK_ROW = 44;
 // rows: video + scene-audio + narration + music + text
-const TOTAL_ROW_HEIGHT = VIDEO_ROW + TRACK_ROW * 4;
+function getTotalRowHeight(videoRowHeight: number) {
+  return videoRowHeight + TRACK_ROW * 4;
+}
 
 export function Timeline({
   blocks,
@@ -64,7 +67,11 @@ export function Timeline({
   onVolumesChange,
   projectAvatarId = null,
   avatarMap = {},
+  videoFormat = "horizontal",
 }: Props) {
+  const formatSpec = getVideoFormatSpec(videoFormat);
+  const videoRowHeight = formatSpec.timelineVideoRowHeight;
+  const totalRowHeight = getTotalRowHeight(videoRowHeight);
   const totalSeconds = blocks.reduce((acc, b) => acc + b.durationSeconds, 0) || 30;
   const contentWidth = Math.max(800, Math.ceil(totalSeconds * pxPerSecond));
 
@@ -88,9 +95,14 @@ export function Timeline({
   }, [currentTime, pxPerSecond, playing]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-timeline-bg text-white">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-timeline-bg text-timeline-foreground">
       <div className="flex min-h-0 flex-1">
-        <TrackMixer volumes={volumes} onVolumesChange={onVolumesChange} />
+        <TrackMixer
+          volumes={volumes}
+          onVolumesChange={onVolumesChange}
+          videoRowHeight={videoRowHeight}
+          formatLabel={formatSpec.shortLabel}
+        />
         <div
           ref={scrollRef}
           className="relative flex-1 overflow-x-auto overflow-y-hidden scrollbar-thin scrollbar-dark"
@@ -103,7 +115,10 @@ export function Timeline({
             />
 
             <div className="relative">
-              <div className="relative h-[64px] border-b border-black/30 bg-timeline-track/40">
+              <div
+                className="relative border-b border-timeline-border bg-timeline-track/40"
+                style={{ height: videoRowHeight }}
+              >
                 <Reorder.Group
                   axis="x"
                   values={blocks}
@@ -119,12 +134,13 @@ export function Timeline({
                       onSelect={onSelect}
                       projectAvatarId={projectAvatarId}
                       avatarMap={avatarMap}
+                      videoFormat={videoFormat}
                     />
                   ))}
                 </Reorder.Group>
               </div>
 
-              <div className="flex h-[44px] items-center gap-0 border-b border-black/30 bg-cyan-950/20 px-0.5">
+              <div className="flex h-[44px] items-center gap-0 border-b border-timeline-border bg-cyan-500/10 px-0.5">
                 {blocks.map((b) => (
                   <SceneAudioTrackBlock
                     key={b.id}
@@ -136,7 +152,7 @@ export function Timeline({
                 ))}
               </div>
 
-              <div className="flex h-[44px] items-center gap-0 border-b border-black/30 bg-timeline-track/30 px-0.5">
+              <div className="flex h-[44px] items-center gap-0 border-b border-timeline-border bg-timeline-track/30 px-0.5">
                 {blocks.map((b) => (
                   <AudioTrackBlock
                     key={b.id}
@@ -150,7 +166,7 @@ export function Timeline({
                 ))}
               </div>
 
-              <div className="flex h-[44px] items-center gap-0 border-b border-black/30 bg-amber-950/20 px-0.5">
+              <div className="flex h-[44px] items-center gap-0 border-b border-timeline-border bg-amber-500/10 px-0.5">
                 <MusicTrackBlock
                   totalSeconds={totalSeconds}
                   pxPerSecond={pxPerSecond}
@@ -178,7 +194,7 @@ export function Timeline({
             <TimelinePlayhead
               currentTime={currentTime}
               pxPerSecond={pxPerSecond}
-              height={RULER_HEIGHT + TOTAL_ROW_HEIGHT}
+              height={RULER_HEIGHT + totalRowHeight}
               rulerHeight={RULER_HEIGHT}
               totalSeconds={totalSeconds}
               onScrub={onScrub}
@@ -193,16 +209,20 @@ export function Timeline({
 function TrackMixer({
   volumes,
   onVolumesChange,
+  videoRowHeight,
+  formatLabel,
 }: {
   volumes: TimelineVolumes;
   onVolumesChange: (patch: Partial<TimelineVolumes>) => void;
+  videoRowHeight: number;
+  formatLabel: string;
 }) {
   return (
     <div
-      className="flex shrink-0 flex-col border-r border-black/30 bg-timeline-ruler text-white/70"
+      className="flex shrink-0 flex-col border-r border-timeline-border bg-timeline-ruler text-timeline-muted"
       style={{ width: TRACK_LABEL_WIDTH }}
     >
-      <div className="flex h-6 flex-col justify-center border-b border-black/30 px-1.5">
+      <div className="flex h-6 flex-col justify-center border-b border-timeline-border px-1.5">
         <TimelineVolumeSlider
           label="Master"
           value={volumes.master}
@@ -210,11 +230,14 @@ function TrackMixer({
           compact
         />
       </div>
-      <div className="flex h-[64px] items-center border-b border-black/30 px-2 text-[10px] uppercase tracking-wide">
-        Video
+      <div
+        className="flex items-center border-b border-timeline-border px-2 text-[10px] uppercase tracking-wide"
+        style={{ height: videoRowHeight }}
+      >
+        Video · {formatLabel}
       </div>
-      <div className="flex h-[44px] flex-col justify-center gap-0.5 border-b border-black/30 px-1.5">
-        <span className="text-[9px] font-medium uppercase tracking-wide text-cyan-300/90">
+      <div className="flex h-[44px] flex-col justify-center gap-0.5 border-b border-timeline-border px-1.5">
+        <span className="text-[9px] font-medium uppercase tracking-wide text-cyan-300/90 [html[data-theme=light-all]_&]:text-cyan-700">
           Scene
         </span>
         <TimelineVolumeSlider
@@ -224,8 +247,8 @@ function TrackMixer({
           compact
         />
       </div>
-      <div className="flex h-[44px] flex-col justify-center gap-0.5 border-b border-black/30 px-1.5">
-        <span className="text-[9px] font-medium uppercase tracking-wide text-emerald-300/90">
+      <div className="flex h-[44px] flex-col justify-center gap-0.5 border-b border-timeline-border px-1.5">
+        <span className="text-[9px] font-medium uppercase tracking-wide text-emerald-300/90 [html[data-theme=light-all]_&]:text-emerald-700">
           Narration
         </span>
         <TimelineVolumeSlider
@@ -235,8 +258,8 @@ function TrackMixer({
           compact
         />
       </div>
-      <div className="flex h-[44px] flex-col justify-center gap-0.5 border-b border-black/30 px-1.5">
-        <span className="text-[9px] font-medium uppercase tracking-wide text-amber-300/90">
+      <div className="flex h-[44px] flex-col justify-center gap-0.5 border-b border-timeline-border px-1.5">
+        <span className="text-[9px] font-medium uppercase tracking-wide text-amber-300/90 [html[data-theme=light-all]_&]:text-amber-700">
           Music
         </span>
         <TimelineVolumeSlider

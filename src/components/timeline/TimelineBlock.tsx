@@ -13,6 +13,7 @@ import {
 import type { Block } from "./types";
 import { SEGMENT_COLORS, resolveBlockCharacterDisplay, statusDot, type AvatarLookup } from "./types";
 import { cn } from "@/lib/utils";
+import { getVideoFormatSpec, type VideoFormat } from "@/lib/video-format";
 
 /** Integer-only pseudo waveform — identical on server and client (avoids Math.sin FP drift). */
 function waveformBars(
@@ -39,6 +40,7 @@ interface Props {
   onSelect: (id: string) => void;
   projectAvatarId?: string | null;
   avatarMap?: AvatarLookup;
+  videoFormat?: VideoFormat | string | null;
 }
 
 export function VideoTrackBlock({
@@ -48,9 +50,13 @@ export function VideoTrackBlock({
   onSelect,
   projectAvatarId = null,
   avatarMap = {},
+  videoFormat = "horizontal",
 }: Props) {
+  const formatSpec = getVideoFormatSpec(videoFormat);
   const controls = useDragControls();
-  const width = Math.max(40, block.durationSeconds * pxPerSecond);
+  const width = Math.max(formatSpec.id === "vertical" ? 56 : 40, block.durationSeconds * pxPerSecond);
+  const blockHeight = formatSpec.timelineVideoRowHeight - 8;
+  const isVertical = formatSpec.id === "vertical";
   const grad = SEGMENT_COLORS[block.segmentType] ?? SEGMENT_COLORS.development;
   const status = statusDot(block);
   const character = resolveBlockCharacterDisplay(block, projectAvatarId, avatarMap);
@@ -68,7 +74,7 @@ export function VideoTrackBlock({
           ? "border-accent ring-1 ring-accent"
           : "border-white/10 hover:border-white/30",
       )}
-      style={{ width, height: 56 }}
+      style={{ width, height: blockHeight }}
       onClick={() => onSelect(block.id)}
     >
       <button
@@ -83,10 +89,17 @@ export function VideoTrackBlock({
         <GripVertical className="h-3 w-3" />
       </button>
 
-      <div className="absolute inset-y-0 left-3 right-0 flex items-center gap-1.5 px-1.5">
+      <div
+        className={cn(
+          "absolute inset-y-0 left-3 right-0 flex px-1.5",
+          isVertical ? "items-stretch gap-1 py-1" : "items-center gap-1.5",
+        )}
+      >
         <div
-          className="flex h-9 w-12 shrink-0 items-center justify-center rounded bg-black/40 text-white/80 overflow-hidden"
-          style={{ minWidth: 48 }}
+          className={cn(
+            "flex shrink-0 items-center justify-center overflow-hidden rounded bg-black/40 text-white/80",
+            formatSpec.timelineThumbClass,
+          )}
         >
           {block.keyframeUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
@@ -95,24 +108,33 @@ export function VideoTrackBlock({
               alt=""
               className="h-full w-full object-cover"
             />
+          ) : block.videoUrl ? (
+            <video
+              src={block.videoUrl}
+              muted
+              playsInline
+              className="h-full w-full object-cover"
+            />
           ) : (
             <ImageIcon className="h-3.5 w-3.5" />
           )}
         </div>
-        <div className="min-w-0 flex-1">
+        <div className={cn("min-w-0 flex-1", isVertical && "flex flex-col justify-center py-0.5")}>
           <div className="flex items-center gap-1">
-            <span className={cn("h-1.5 w-1.5 rounded-full", status.color)} title={status.label} />
+            <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", status.color)} title={status.label} />
             <span className="truncate text-[10px] font-semibold uppercase tracking-wide text-white/95">
               {block.segmentType}
             </span>
-            <span className="ml-auto text-[9px] font-mono text-white/70">
+            <span className="ml-auto shrink-0 text-[9px] font-mono text-white/70">
               {block.durationSeconds}s
             </span>
           </div>
-          <div className="truncate text-[10px] text-white/85">
-            {block.narrativeText.slice(0, 80)}
-          </div>
-          {character && (
+          {!isVertical && (
+            <div className="truncate text-[10px] text-white/85">
+              {block.narrativeText.slice(0, 80)}
+            </div>
+          )}
+          {character && !isVertical && (
             <div className="mt-0.5 flex items-center gap-1">
               <div className="flex h-4 w-4 shrink-0 items-center justify-center overflow-hidden rounded-full bg-black/50 ring-1 ring-white/20">
                 {character.imageUrl ? (
@@ -158,12 +180,12 @@ export function AudioTrackBlock({
       onClick={() => onSelect(block.id)}
       className={cn(
         "relative shrink-0 cursor-pointer overflow-hidden rounded-md border text-[10px]",
-        selected ? "border-accent" : "border-white/10",
+        selected ? "border-accent" : "border-timeline-border/50",
         muted
-          ? "bg-timeline-track/60 text-white/30"
+          ? "bg-timeline-track/60 text-timeline-muted/50"
           : hasAudio
-            ? "bg-emerald-900/40 text-emerald-200"
-            : "bg-timeline-track text-white/40",
+            ? "bg-emerald-500/15 text-emerald-200 [html[data-theme=light-all]_&]:text-emerald-800"
+            : "bg-timeline-track text-timeline-muted",
       )}
       style={{ width, height: 36 }}
       title={hasAudio ? `Narration · ${vol}%` : "No narration yet"}
@@ -239,10 +261,10 @@ export function MusicTrackBlock({
       className={cn(
         "relative shrink-0 cursor-pointer overflow-hidden rounded-md border text-[10px]",
         error
-          ? "border-red-500/40 bg-red-900/30 text-red-200"
+          ? "border-red-500/40 bg-red-900/30 text-red-200 [html[data-theme=light-all]_&]:bg-red-500/15 [html[data-theme=light-all]_&]:text-red-800"
           : hasMusic
-            ? "border-amber-400/40 bg-amber-900/40 text-amber-100"
-            : "border-white/10 bg-timeline-track text-white/50",
+            ? "border-amber-400/40 bg-amber-900/40 text-amber-100 [html[data-theme=light-all]_&]:bg-amber-500/15 [html[data-theme=light-all]_&]:text-amber-900"
+            : "border-timeline-border/50 bg-timeline-track text-timeline-muted",
       )}
       style={{ width, height: 36 }}
       title={musicPrompt ?? "No background music"}
@@ -305,12 +327,12 @@ export function SceneAudioTrackBlock({
       onClick={() => onSelect(block.id)}
       className={cn(
         "relative shrink-0 cursor-pointer overflow-hidden rounded-md border text-[10px]",
-        selected ? "border-accent" : "border-white/10",
+        selected ? "border-accent" : "border-timeline-border/50",
         muted
-          ? "bg-timeline-track/60 text-white/30"
+          ? "bg-timeline-track/60 text-timeline-muted/50"
           : hasAudio
-            ? "bg-cyan-900/40 text-cyan-200"
-            : "bg-timeline-track text-white/40",
+            ? "bg-cyan-500/15 text-cyan-200 [html[data-theme=light-all]_&]:text-cyan-800"
+            : "bg-timeline-track text-timeline-muted",
       )}
       style={{ width, height: 36 }}
       title={
@@ -357,11 +379,11 @@ export function TextTrackBlock({ block, pxPerSecond, selected, onSelect }: { blo
       onClick={() => onSelect(block.id)}
       className={cn(
         "relative shrink-0 cursor-pointer overflow-hidden rounded-md border bg-timeline-track text-[10px]",
-        selected ? "border-accent" : "border-white/10",
+        selected ? "border-accent" : "border-timeline-border/50",
       )}
       style={{ width, height: 36 }}
     >
-      <div className="line-clamp-2 px-1.5 py-0.5 text-white/85">
+      <div className="line-clamp-2 px-1.5 py-0.5 text-timeline-foreground/85">
         {block.narrativeText}
       </div>
     </div>

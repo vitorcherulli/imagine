@@ -61,11 +61,11 @@ export function TimelineRuler({ totalSeconds, pxPerSecond, onScrub }: Props) {
       <div key={s} className="absolute top-0 h-full" style={{ left: x }}>
         <div
           className={
-            major ? "h-2 w-px bg-white/40" : "h-1 w-px bg-white/20"
+            major ? "h-2 w-px bg-timeline-muted/60" : "h-1 w-px bg-timeline-muted/35"
           }
         />
         {major && (
-          <div className="absolute left-1 top-2 text-[9px] font-mono text-white/60">
+          <div className="absolute left-1 top-2 text-[9px] font-mono text-timeline-muted">
             {formatSec(s)}
           </div>
         )}
@@ -76,7 +76,7 @@ export function TimelineRuler({ totalSeconds, pxPerSecond, onScrub }: Props) {
   return (
     <div
       ref={rulerRef}
-      className={`relative h-6 border-b border-black/30 bg-timeline-ruler select-none ${
+      className={`relative h-6 border-b border-timeline-border bg-timeline-ruler select-none ${
         onScrub ? "cursor-ew-resize" : ""
       }`}
       style={{ width }}

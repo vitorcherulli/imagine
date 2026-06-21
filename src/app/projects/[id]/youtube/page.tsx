@@ -4,6 +4,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { auth } from "@clerk/nextjs/server";
 import { db, schema } from "@/lib/db";
 import { Sidebar } from "@/components/Sidebar";
+import { getVideoFormatSpec } from "@/lib/video-format";
 import { YoutubeEditor } from "@/components/YoutubeEditor";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft } from "lucide-react";
@@ -21,17 +22,23 @@ export default async function YoutubePage({ params }: { params: { id: string } }
     .limit(1);
   if (!project) notFound();
 
-  const [yt] = await db
-    .select()
-    .from(schema.youtubeMetadata)
-    .where(eq(schema.youtubeMetadata.projectId, project.id))
-    .limit(1);
+  const [yt, userAvatars] = await Promise.all([
+    db
+      .select()
+      .from(schema.youtubeMetadata)
+      .where(eq(schema.youtubeMetadata.projectId, project.id))
+      .limit(1)
+      .then((rows) => rows[0] ?? null),
+    db.select().from(schema.avatars).where(eq(schema.avatars.userId, userId)),
+  ]);
 
   const projects = await db
     .select()
     .from(schema.projects)
     .where(eq(schema.projects.userId, userId))
     .orderBy(desc(schema.projects.updatedAt));
+
+  const formatSpec = getVideoFormatSpec(project.videoFormat);
 
   return (
     <div className="flex h-screen w-full">
@@ -44,14 +51,17 @@ export default async function YoutubePage({ params }: { params: { id: string } }
             </Button>
           </Link>
           <div className="min-w-0 flex-1">
-            <h1 className="truncate text-sm font-semibold">{project.title} — YouTube</h1>
+            <h1 className="truncate text-sm font-semibold">
+              {project.title} — {formatSpec.id === "vertical" ? "Reels cover" : "YouTube thumbnail"}
+            </h1>
             <p className="truncate text-2xs text-muted-foreground">
-              Thumbnail, titles, description and tags for upload.
+              Cover ({formatSpec.thumbnailSizeLabel}), titles, description & tags ·{" "}
+              {formatSpec.platformHint}
             </p>
           </div>
         </header>
         <section className="px-5 py-5">
-          <YoutubeEditor project={project} initial={yt ?? null} />
+          <YoutubeEditor project={project} initial={yt ?? null} avatars={userAvatars} />
         </section>
       </main>
     </div>

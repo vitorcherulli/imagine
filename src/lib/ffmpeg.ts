@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
 import fsSync from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 export const SEEDANCE_MIN_DURATION = 4;
@@ -16,6 +17,41 @@ export function pickSeedanceRequestDuration(targetSeconds: number): number {
 
 export function hasFfmpeg(): boolean {
   return !!resolveFfmpegBin();
+}
+
+/** Short silent stereo WAV for music-only / visual-only export segments. */
+export async function createSilentWav(outPath: string, durationSeconds: number): Promise<string> {
+  const ffmpegBin = resolveFfmpegBin();
+  if (!ffmpegBin) throw new Error("ffmpeg is not installed or not on PATH");
+  const dur = Math.max(0.1, durationSeconds);
+  await fs.mkdir(path.dirname(outPath), { recursive: true });
+  return new Promise((resolve, reject) => {
+    const proc = spawn(
+      ffmpegBin,
+      [
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "anullsrc=r=44100:cl=stereo",
+        "-t",
+        String(dur),
+        "-c:a",
+        "pcm_s16le",
+        outPath,
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+    let stderr = "";
+    proc.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    proc.on("error", reject);
+    proc.on("close", (code) => {
+      if (code === 0) resolve(outPath);
+      else reject(new Error(`ffmpeg silent audio failed: ${stderr.slice(-500)}`));
+    });
+  });
 }
 
 function resolveFfmpegBin(): string | null {
@@ -47,31 +83,24 @@ import {
   effectiveNarrationGain,
   effectiveSceneGain,
 } from "./volume";
+import { escapeFfmpegSubtitlesPath } from "./captions";
+import { normalizeVideoFormat, type VideoFormat } from "./video-format";
+import {
+  DEFAULT_EXPORT_RESOLUTION,
+  EXPORT_RESOLUTIONS,
+  isExportResolutionId,
+  resolveExportResolution,
+  type ExportResolution,
+  type ExportResolutionId,
+} from "./export-resolutions";
 
-export type ExportResolutionId = "720p" | "1080p" | "1440p" | "2160p";
-
-export interface ExportResolution {
-  id: ExportResolutionId;
-  width: number;
-  height: number;
-  label: string;
-  /** Constant Rate Factor — lower = better quality, larger files. */
-  crf: number;
-  preset: string;
-}
-
-export const EXPORT_RESOLUTIONS: Record<ExportResolutionId, ExportResolution> = {
-  "720p": { id: "720p", width: 1280, height: 720, label: "HD 720p", crf: 22, preset: "veryfast" },
-  "1080p": { id: "1080p", width: 1920, height: 1080, label: "Full HD 1080p", crf: 20, preset: "veryfast" },
-  "1440p": { id: "1440p", width: 2560, height: 1440, label: "QHD 1440p", crf: 19, preset: "medium" },
-  "2160p": { id: "2160p", width: 3840, height: 2160, label: "4K 2160p", crf: 18, preset: "medium" },
-};
-
-export const DEFAULT_EXPORT_RESOLUTION: ExportResolutionId = "1080p";
-
-export function isExportResolutionId(id: string | null | undefined): id is ExportResolutionId {
-  return !!id && id in EXPORT_RESOLUTIONS;
-}
+export type { ExportResolution, ExportResolutionId } from "./export-resolutions";
+export {
+  DEFAULT_EXPORT_RESOLUTION,
+  EXPORT_RESOLUTIONS,
+  isExportResolutionId,
+  resolveExportResolution,
+} from "./export-resolutions";
 
 export async function concatBlocksWithAudio(opts: {
   segments: Array<{
@@ -82,6 +111,8 @@ export async function concatBlocksWithAudio(opts: {
     sceneAudioVolume?: number;
     /** Timeline block length — video is loop/trimmed and audio trimmed to match. */
     durationSeconds: number;
+    /** Slice narration from this offset (continuous visual cuts). */
+    audioTrimStart?: number;
   }>;
   outputPath: string;
   musicPath?: string | null;
@@ -90,6 +121,9 @@ export async function concatBlocksWithAudio(opts: {
   sceneVolume?: number;
   masterVolume?: number;
   resolution?: ExportResolutionId;
+  videoFormat?: VideoFormat | unknown;
+  /** Optional ASS subtitle file burned into the exported video. */
+  captionsAssPath?: string | null;
   fps?: number;
 }): Promise<void> {
   const {
@@ -101,11 +135,13 @@ export async function concatBlocksWithAudio(opts: {
     sceneVolume,
     masterVolume,
     resolution = DEFAULT_EXPORT_RESOLUTION,
+    videoFormat = "horizontal",
+    captionsAssPath = null,
     fps = 30,
   } = opts;
   if (segments.length === 0) throw new Error("No segments to export");
 
-  const res = EXPORT_RESOLUTIONS[resolution];
+  const res = resolveExportResolution(resolution, videoFormat);
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
 
   // Each segment uses 2 inputs (video + narration). Scene audio is added as an extra
@@ -150,12 +186,13 @@ export async function concatBlocksWithAudio(opts: {
       trackVolume: narrationVolume,
       masterVolume,
     });
+    const audioStart = Math.max(0, seg.audioTrimStart ?? 0);
     // Loop/trim video and trim narration to the same block duration so concat is stable.
     filterParts.push(
       `[${vIdx}:v]${scaleFilter},loop=loop=-1:size=32767:start=0,trim=duration=${dur},setpts=PTS-STARTPTS[v${i}]`,
     );
     filterParts.push(
-      `[${aIdx}:a]aresample=44100,aformat=channel_layouts=stereo,volume=${narrationGain.toFixed(4)},atrim=duration=${dur},asetpts=PTS-STARTPTS[narr${i}]`,
+      `[${aIdx}:a]aresample=44100,aformat=channel_layouts=stereo,volume=${narrationGain.toFixed(4)},atrim=start=${audioStart}:duration=${dur},asetpts=PTS-STARTPTS[narr${i}]`,
     );
     const sceneIdx = sceneInputIndex.get(i);
     if (sceneIdx !== undefined) {
@@ -183,6 +220,13 @@ export async function concatBlocksWithAudio(opts: {
     `${concatInputs}concat=n=${segments.length}:v=1:a=1[outv][narration]`,
   );
 
+  let videoMapLabel = "outv";
+  if (captionsAssPath) {
+    const escaped = escapeFfmpegSubtitlesPath(captionsAssPath);
+    filterParts.push(`[outv]subtitles='${escaped}'[outvc]`);
+    videoMapLabel = "outvc";
+  }
+
   if (hasMusic) {
     const vol = effectiveMusicGain({ musicVolume, masterVolume });
     filterParts.push(
@@ -194,7 +238,7 @@ export async function concatBlocksWithAudio(opts: {
   const filterComplex = filterParts.join(";");
 
   args.push("-filter_complex", filterComplex);
-  args.push("-map", "[outv]");
+  args.push("-map", `[${videoMapLabel}]`);
   if (hasMusic) {
     args.push("-map", "[outa]");
   } else {
@@ -338,6 +382,70 @@ export async function getMediaDurationSeconds(filePath: string): Promise<number>
   }
 }
 
+/** Speed up or slow down narration (0.75–1.35). Uses atempo; chains filters beyond 0.5–2.0. */
+export async function adjustSpeechSpeed(
+  inputBuffer: Buffer,
+  inputFilename: string,
+  speed: number,
+): Promise<{ buffer: Buffer; filename: string }> {
+  const target = normalizeAtempoSpeed(speed);
+  if (Math.abs(target - 1) < 0.02 || !hasFfmpeg()) {
+    return { buffer: inputBuffer, filename: inputFilename };
+  }
+
+  const ext = path.extname(inputFilename).toLowerCase() || ".wav";
+  const outExt = ext === ".mp3" ? ".mp3" : ".wav";
+  const outName = inputFilename.replace(/\.[^.]+$/, "") + `_spd${outExt}`;
+  const tmpDir = path.join(os.tmpdir(), "imagine-tts-speed");
+  await fs.mkdir(tmpDir, { recursive: true });
+  const inPath = path.join(tmpDir, `in_${Date.now()}${ext}`);
+  const outPath = path.join(tmpDir, `out_${Date.now()}${outExt}`);
+  await fs.writeFile(inPath, inputBuffer);
+
+  const filter = buildAtempoFilterChain(target);
+  const encodeArgs =
+    outExt === ".mp3"
+      ? ["-c:a", "libmp3lame", "-b:a", "192k"]
+      : ["-c:a", "pcm_s16le"];
+
+  try {
+    await runFfmpeg([
+      "-y",
+      "-i",
+      inPath,
+      "-filter:a",
+      filter,
+      ...encodeArgs,
+      outPath,
+    ]);
+    const buffer = await fs.readFile(outPath);
+    return { buffer, filename: outName };
+  } finally {
+    await fs.unlink(inPath).catch(() => {});
+    await fs.unlink(outPath).catch(() => {});
+  }
+}
+
+function normalizeAtempoSpeed(speed: number): number {
+  if (!Number.isFinite(speed)) return 1;
+  return Math.min(1.35, Math.max(0.75, speed));
+}
+
+function buildAtempoFilterChain(speed: number): string {
+  const parts: string[] = [];
+  let remaining = speed;
+  while (remaining > 2.0) {
+    parts.push("atempo=2.0");
+    remaining /= 2.0;
+  }
+  while (remaining < 0.5) {
+    parts.push("atempo=0.5");
+    remaining /= 0.5;
+  }
+  parts.push(`atempo=${remaining.toFixed(4)}`);
+  return parts.join(",");
+}
+
 function runFfmpeg(args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
     const ffmpegBin = resolveFfmpegBin();
@@ -425,6 +533,10 @@ export async function fitVideoToDuration(
 
   const target = Math.max(0.5, targetSeconds);
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
+
+  if (!fsSync.existsSync(inputPath)) {
+    throw new Error(`Input video not found: ${inputPath}`);
+  }
 
   let sourceDuration = 0;
   try {

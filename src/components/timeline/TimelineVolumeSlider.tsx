@@ -35,14 +35,14 @@ export function TimelineVolumeSlider({
     <div className={cn("flex min-w-0 flex-col gap-0.5", className)}>
       <div className="flex items-center justify-between gap-1">
         {label && (
-          <span className="truncate text-[9px] font-medium uppercase tracking-wide text-white/60">
+          <span className="truncate text-[9px] font-medium uppercase tracking-wide text-timeline-muted">
             {label}
           </span>
         )}
         <button
           type="button"
           onClick={() => onChange(muted ? 100 : 0)}
-          className="shrink-0 rounded p-0.5 text-white/50 hover:bg-white/10 hover:text-white/90"
+          className="shrink-0 rounded p-0.5 text-timeline-muted hover:bg-timeline-muted/15 hover:text-timeline-foreground"
           title={muted ? "Unmute" : "Mute"}
         >
           {muted ? <VolumeX className="h-3 w-3" /> : <Volume2 className="h-3 w-3" />}
@@ -56,14 +56,14 @@ export function TimelineVolumeSlider({
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
         className={cn(
-          "h-1 w-full cursor-pointer appearance-none rounded-full bg-white/15",
+          "h-1 w-full cursor-pointer appearance-none rounded-full bg-timeline-muted/25",
           trackClass,
           compact ? "max-w-[52px]" : "max-w-full",
         )}
         aria-label={label ? `${label} volume` : "Volume"}
       />
       {!compact && (
-        <span className="text-right font-mono text-[9px] text-white/45">{value}%</span>
+        <span className="text-right font-mono text-[9px] text-timeline-muted/80">{value}%</span>
       )}
     </div>
   );

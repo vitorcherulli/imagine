@@ -17,7 +17,7 @@ const buttonVariants = cva(
           "bg-destructive text-destructive-foreground hover:bg-destructive/90",
         success: "bg-success text-success-foreground hover:bg-success/90",
         timeline:
-          "bg-timeline-track text-timeline-text hover:bg-timeline-block border border-white/5",
+          "bg-timeline-block text-timeline-foreground hover:bg-timeline-track border border-timeline-border/40",
       },
       size: {
         xs: "h-6 px-2 text-2xs",

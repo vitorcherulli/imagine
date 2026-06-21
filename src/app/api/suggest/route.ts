@@ -6,15 +6,20 @@ import {
   buildSuggestionUserPrompt,
 } from "@/lib/story-prompts";
 import { tryUser } from "@/lib/auth";
+import { resolveProjectIdentityForProject } from "@/lib/project-dna-server";
+import { db, schema } from "@/lib/db";
+import { and, eq } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const schema = z.object({
+const bodySchema = z.object({
   genre: z.string().min(1),
   visualStyle: z.string().min(1),
   voiceTone: z.string().min(1),
   targetDurationSeconds: z.number().int().min(30).max(1800),
+  videoFormat: z.enum(["horizontal", "vertical"]).optional(),
+  projectDnaId: z.string().nullable().optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -22,16 +27,40 @@ export async function POST(req: NextRequest) {
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = await req.json().catch(() => ({}));
-  const parsed = schema.safeParse(body);
+  const parsed = bodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid input" }, { status: 400 });
+  }
+
+  let projectIdentity: string | undefined;
+  if (parsed.data.projectDnaId) {
+    const [projectLike] = await db
+      .select()
+      .from(schema.projectDna)
+      .where(
+        and(eq(schema.projectDna.id, parsed.data.projectDnaId), eq(schema.projectDna.userId, userId)),
+      )
+      .limit(1);
+    if (projectLike) {
+      projectIdentity = await resolveProjectIdentityForProject({
+        userId,
+        projectDnaId: parsed.data.projectDnaId,
+        projectIdentity: "",
+      });
+    }
   }
 
   try {
     const raw = await chatCompletion({
       messages: [
         { role: "system", content: buildSuggestionSystemPrompt() },
-        { role: "user", content: buildSuggestionUserPrompt(parsed.data) },
+        {
+          role: "user",
+          content: buildSuggestionUserPrompt({
+            ...parsed.data,
+            projectIdentity,
+          }),
+        },
       ],
       temperature: 0.95,
       response_format: { type: "json_object" },

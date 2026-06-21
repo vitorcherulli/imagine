@@ -1,8 +1,9 @@
 "use client";
 
 import * as React from "react";
-import { Settings2 } from "lucide-react";
+import { ChevronDown, Settings2 } from "lucide-react";
 import { Label } from "@/components/ui/label";
+import { cn } from "@/lib/utils";
 import {
   Select,
   SelectContent,
@@ -24,6 +25,28 @@ import {
   type ProjectApiModels,
 } from "@/lib/project-api-models";
 
+const API_SETTINGS_COLLAPSED_KEY = "imagine-api-settings-collapsed";
+
+function readApiSettingsCollapsed(defaultCollapsed: boolean): boolean {
+  try {
+    if (typeof window === "undefined") return defaultCollapsed;
+    const stored = localStorage.getItem(API_SETTINGS_COLLAPSED_KEY);
+    if (stored === null) return defaultCollapsed;
+    return stored === "1";
+  } catch {
+    return defaultCollapsed;
+  }
+}
+
+function writeApiSettingsCollapsed(collapsed: boolean): void {
+  try {
+    if (collapsed) localStorage.setItem(API_SETTINGS_COLLAPSED_KEY, "1");
+    else localStorage.removeItem(API_SETTINGS_COLLAPSED_KEY);
+  } catch {
+    // ignore
+  }
+}
+
 interface Props {
   value: ProjectApiModels;
   onChange: (patch: Partial<ProjectApiModels>) => void;
@@ -34,64 +57,70 @@ interface Props {
 export function ProjectApiSettings({ value, onChange, variant = "inline" }: Props) {
   const voiceOptions = voiceOptionsForTtsModel(value.ttsModel);
   const videoBillingName = videoOpenRouterBillingForModel(value.videoModel);
+  const isInline = variant === "inline";
+  const defaultCollapsed = isInline;
+  const [collapsed, setCollapsed] = React.useState(defaultCollapsed);
+
+  React.useEffect(() => {
+    if (!isInline) return;
+    setCollapsed(readApiSettingsCollapsed(defaultCollapsed));
+  }, [isInline, defaultCollapsed]);
+
+  function toggleCollapsed() {
+    setCollapsed((prev) => {
+      const next = !prev;
+      if (isInline) writeApiSettingsCollapsed(next);
+      return next;
+    });
+  }
 
   const selectClass = variant === "inline" ? "h-8 text-xs" : "h-9 text-xs";
+  const summary = apiModelsSummary(value);
 
-  return (
-    <div
-      className={
-        variant === "inline"
-          ? "rounded-md border border-border bg-muted/30 p-3"
-          : "space-y-3"
-      }
-    >
-      <div className="mb-2 flex items-center gap-1.5">
-        <Settings2 className="h-3.5 w-3.5 text-muted-foreground" />
-        <span className="text-xs font-medium">API models</span>
-        <span className="text-2xs text-muted-foreground">per project</span>
-      </div>
-      <div className="grid grid-cols-2 gap-2">
-        <Field label="Story">
-          <Select value={value.llmModel} onValueChange={(v) => onChange({ llmModel: v })}>
-            <SelectTrigger className={selectClass}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {LLM_MODEL_OPTIONS.map((o) => (
-                <SelectItem key={o.value} value={o.value}>
-                  {o.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
-        <Field label="Image">
-          <Select value={value.imageModel} onValueChange={(v) => onChange({ imageModel: v })}>
-            <SelectTrigger className={selectClass}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {IMAGE_MODEL_OPTIONS.map((o) => (
-                <SelectItem key={o.value} value={o.value}>
-                  {o.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
-        <Field label="Video">
-          <Select value={value.videoModel} onValueChange={(v) => onChange({ videoModel: v })}>
-            <SelectTrigger className={selectClass}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {VIDEO_MODEL_OPTIONS.map((o) => (
-                <SelectItem key={o.value} value={o.value}>
-                  {o.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+  const fields = (
+    <div className="grid grid-cols-2 gap-2">
+      <Field label="Story">
+        <Select value={value.llmModel} onValueChange={(v) => onChange({ llmModel: v })}>
+          <SelectTrigger className={selectClass}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {LLM_MODEL_OPTIONS.map((o) => (
+              <SelectItem key={o.value} value={o.value}>
+                {o.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </Field>
+      <Field label="Image">
+        <Select value={value.imageModel} onValueChange={(v) => onChange({ imageModel: v })}>
+          <SelectTrigger className={selectClass}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {IMAGE_MODEL_OPTIONS.map((o) => (
+              <SelectItem key={o.value} value={o.value}>
+                {o.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </Field>
+      <Field label="Video">
+        <Select value={value.videoModel} onValueChange={(v) => onChange({ videoModel: v })}>
+          <SelectTrigger className={selectClass}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {VIDEO_MODEL_OPTIONS.map((o) => (
+              <SelectItem key={o.value} value={o.value}>
+                {o.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {!collapsed && (
           <p className="mt-1 text-2xs text-muted-foreground">
             Clip length follows narration (4–15s), then ffmpeg fits to block duration.
             {videoBillingName && (
@@ -104,57 +133,97 @@ export function ProjectApiSettings({ value, onChange, variant = "inline" }: Prop
               </>
             )}
           </p>
-        </Field>
-        <Field label="Voice API">
-          <Select
-            value={value.ttsModel}
-            onValueChange={(v) => {
-              const nextVoiceOptions = voiceOptionsForTtsModel(v);
-              const keepVoice = nextVoiceOptions.some((o) => o.value === value.ttsVoice);
-              onChange({
-                ttsModel: v,
-                ttsVoice: keepVoice ? value.ttsVoice : getDefaultTtsVoiceForModel(v),
-              });
-            }}
-          >
-            <SelectTrigger className={selectClass}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {TTS_MODEL_OPTIONS.map((o) => (
-                <SelectItem key={o.value} value={o.value}>
-                  {o.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
-        <Field label="Voice" className="col-span-2">
-          <Select value={value.ttsVoice} onValueChange={(v) => onChange({ ttsVoice: v })}>
-            <SelectTrigger className={selectClass}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent className="max-h-64">
-              {voiceOptions.map((o) => (
-                <SelectItem key={o.value} value={o.value}>
-                  {o.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {isGeminiTtsModel(value.ttsModel) && (
-            <p className="mt-1 text-2xs text-amber-600/90 dark:text-amber-400/90">
-              Gemini may block some scripts (Google safety filter). If generation fails, the app
-              auto-switches to Kokoro — or select Kokoro directly for fewer errors.
-            </p>
-          )}
-          {!isGeminiTtsModel(value.ttsModel) && (
-            <p className="mt-1 text-2xs text-muted-foreground">
-              Reliable narration for story blocks. Voice follows tone when set to Auto.
-            </p>
-          )}
-        </Field>
+        )}
+      </Field>
+      <Field label="Voice API">
+        <Select
+          value={value.ttsModel}
+          onValueChange={(v) => {
+            const nextVoiceOptions = voiceOptionsForTtsModel(v);
+            const keepVoice = nextVoiceOptions.some((o) => o.value === value.ttsVoice);
+            onChange({
+              ttsModel: v,
+              ttsVoice: keepVoice ? value.ttsVoice : getDefaultTtsVoiceForModel(v),
+            });
+          }}
+        >
+          <SelectTrigger className={selectClass}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {TTS_MODEL_OPTIONS.map((o) => (
+              <SelectItem key={o.value} value={o.value}>
+                {o.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </Field>
+      <Field label="Voice" className="col-span-2">
+        <Select value={value.ttsVoice} onValueChange={(v) => onChange({ ttsVoice: v })}>
+          <SelectTrigger className={selectClass}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent className="max-h-64">
+            {voiceOptions.map((o) => (
+              <SelectItem key={o.value} value={o.value}>
+                {o.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {!collapsed && isGeminiTtsModel(value.ttsModel) && (
+          <p className="mt-1 text-2xs text-amber-600/90 dark:text-amber-400/90">
+            Gemini may block some scripts (Google safety filter). If generation fails, the app
+            auto-switches to Kokoro — or select Kokoro directly for fewer errors.
+          </p>
+        )}
+        {!collapsed && !isGeminiTtsModel(value.ttsModel) && (
+          <p className="mt-1 text-2xs text-muted-foreground">
+            Reliable narration for story blocks. Voice follows tone when set to Auto.
+          </p>
+        )}
+      </Field>
+    </div>
+  );
+
+  if (!isInline) {
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center gap-1.5">
+          <Settings2 className="h-3.5 w-3.5 text-muted-foreground" />
+          <span className="text-xs font-medium">API models</span>
+          <span className="text-2xs text-muted-foreground">per project</span>
+        </div>
+        {fields}
       </div>
+    );
+  }
+
+  return (
+    <div className="overflow-hidden rounded-md border border-border bg-muted/30">
+      <button
+        type="button"
+        onClick={toggleCollapsed}
+        className="flex w-full items-center gap-1.5 px-3 py-2 text-left hover:bg-muted/50"
+        aria-expanded={!collapsed}
+      >
+        <Settings2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        <span className="text-xs font-medium">API models</span>
+        <span className="text-2xs text-muted-foreground">per project</span>
+        {collapsed && (
+          <span className="ml-1 min-w-0 flex-1 truncate text-[10px] text-muted-foreground">
+            {summary}
+          </span>
+        )}
+        <ChevronDown
+          className={cn(
+            "ml-auto h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
+            !collapsed && "rotate-180",
+          )}
+        />
+      </button>
+      {!collapsed && <div className="border-t border-border px-3 pb-3 pt-2">{fields}</div>}
     </div>
   );
 }

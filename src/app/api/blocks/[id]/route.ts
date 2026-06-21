@@ -4,6 +4,7 @@ import { z } from "zod";
 import { db, schema } from "@/lib/db";
 import { tryUser } from "@/lib/auth";
 import { getBlockForUser } from "@/lib/block-helpers";
+import { deleteBlockMedia } from "@/lib/storage";
 
 export const dynamic = "force-dynamic";
 
@@ -54,6 +55,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
   const owned = await getBlockForUser(params.id, userId);
   if (!owned) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+  await deleteBlockMedia(owned.block.projectId, owned.block.id);
   await db.delete(schema.storyBlocks).where(eq(schema.storyBlocks.id, params.id));
   return NextResponse.json({ ok: true });
 }

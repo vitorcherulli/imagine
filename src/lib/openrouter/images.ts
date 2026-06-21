@@ -6,6 +6,8 @@ export interface ImageGenInput {
   imageSize?: "1K" | "2K" | "4K";
   model?: string;
   referenceImages?: string[];
+  /** Put reference images before the text prompt (helps some image models lock identity). */
+  referenceImagesFirst?: boolean;
 }
 
 export interface ImageGenResult {
@@ -31,13 +33,13 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenResul
   console.info(`[image] model=${model} refs=${input.referenceImages?.length ?? 0}`);
   let userContent: unknown = input.prompt;
   if (input.referenceImages && input.referenceImages.length > 0) {
-    userContent = [
-      { type: "text", text: input.prompt },
-      ...input.referenceImages.map((url) => ({
-        type: "image_url",
-        image_url: { url },
-      })),
-    ];
+    const imageParts = input.referenceImages.map((url) => ({
+      type: "image_url",
+      image_url: { url },
+    }));
+    userContent = input.referenceImagesFirst
+      ? [...imageParts, { type: "text", text: input.prompt }]
+      : [{ type: "text", text: input.prompt }, ...imageParts];
   }
   const body: Record<string, unknown> = {
     model,

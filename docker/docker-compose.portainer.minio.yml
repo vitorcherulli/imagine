@@ -1,0 +1,82 @@
+# ============================================================
+# Imagine V2 — MinIO (Portainer Stack / Docker Swarm)
+# ------------------------------------------------------------
+# Deploy ANTES da stack principal (docker-compose.portainer.yml).
+#
+# Rede overlay: traefik_public (mesma do Traefik e da app).
+# Hostname interno: minio:9000
+#
+# Pré-requisitos:
+#   1) Traefik na rede traefik_public
+#   2) DNS opcional para console (MINIO_CONSOLE_HOST)
+#   3) Credenciais S3 já configuradas (bucket: imagine)
+# ============================================================
+
+version: "3.8"
+
+services:
+  minio:
+    image: minio/minio:latest
+    hostname: minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio_data:/data
+    networks:
+      - traefik_public
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - traefik.enable=true
+        - traefik.docker.network=traefik_public
+        - traefik.http.routers.imagine-minio-console.rule=Host(`${MINIO_CONSOLE_HOST:-minio.example.com}`)
+        - traefik.http.routers.imagine-minio-console.entrypoints=websecure
+        - traefik.http.routers.imagine-minio-console.tls.certresolver=le
+        - traefik.http.routers.imagine-minio-console.service=imagine-minio-console
+        - traefik.http.services.imagine-minio-console.loadbalancer.server.port=9001
+
+  minio-init:
+    image: minio/mc:latest
+    networks:
+      - traefik_public
+    depends_on:
+      - minio
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        echo "Aguardando MinIO..."
+        until mc alias set local http://minio:9000 "$${MINIO_ROOT_USER:-minioadmin}" "$${MINIO_ROOT_PASSWORD:-minioadmin}"; do
+          sleep 2
+        done
+        mc mb --ignore-existing "local/$${S3_BUCKET:-imagine}"
+        mc anonymous set download "local/$${S3_BUCKET:-imagine}"
+        echo "Bucket $${S3_BUCKET:-imagine} pronto."
+        exit 0
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      S3_BUCKET: ${S3_BUCKET:-imagine}
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: none
+
+volumes:
+  minio_data:
+
+networks:
+  traefik_public:
+    external: true
+    name: traefik_public

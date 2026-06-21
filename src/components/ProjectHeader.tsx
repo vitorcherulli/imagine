@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Download, Youtube, Loader2, ArrowLeft, UserSquare, Settings2 } from "lucide-react";
+import { Download, Loader2, ArrowLeft, UserSquare, Settings2, ImageIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -22,8 +22,17 @@ import {
 } from "@/components/ui/dialog";
 import { ProjectApiSettings, apiModelsSummary } from "@/components/ProjectApiSettings";
 import { StyleBibleDialog } from "@/components/StyleBibleDialog";
+import {
+  AvatarCastPicker,
+  AvatarCastPreview,
+  type AvatarCastValue,
+} from "@/components/AvatarCastPicker";
 import { projectApiModelsFromProject, type ProjectApiModels } from "@/lib/project-api-models";
+import { getVideoFormatSpec } from "@/lib/video-format";
 import type { Avatar, Project } from "@/lib/db/schema";
+import type { StyleBible } from "@/lib/style-bible";
+import { ExportHistoryDialog } from "@/components/ExportHistoryDialog";
+import type { ProjectExportItem } from "@/lib/export-history";
 
 const EXPORT_RESOLUTION_OPTIONS = [
   { id: "720p", label: "HD 720p" },
@@ -40,11 +49,17 @@ interface Props {
   canExport: boolean;
   exportBlockerReason?: string | null;
   exporting: boolean;
-  finalVideoUrl?: string | null;
+  projectExports: ProjectExportItem[];
+  onRefreshExports: () => Promise<void>;
+  exportsRefreshing?: boolean;
   avatars: Avatar[];
-  avatar: Avatar | null;
-  onAvatarChange: (id: string | null) => void | Promise<void>;
+  avatarCast: AvatarCastValue;
+  onAvatarCastChange: (value: AvatarCastValue) => void | Promise<void>;
   onApiModelsChange?: (models: ProjectApiModels) => void | Promise<void>;
+  onStyleBibleUpdated?: (next: {
+    styleBible: StyleBible | null;
+    anchorImageUrl: string | null;
+  }) => void;
 }
 
 export function ProjectHeader({
@@ -53,13 +68,19 @@ export function ProjectHeader({
   canExport,
   exportBlockerReason,
   exporting,
-  finalVideoUrl,
+  projectExports,
+  onRefreshExports,
+  exportsRefreshing,
   avatars,
-  avatar,
-  onAvatarChange,
+  avatarCast,
+  onAvatarCastChange,
   onApiModelsChange,
+  onStyleBibleUpdated,
 }: Props) {
   const [apiOpen, setApiOpen] = React.useState(false);
+  const [castOpen, setCastOpen] = React.useState(false);
+  const [draftCast, setDraftCast] = React.useState<AvatarCastValue>(avatarCast);
+  const [savingCast, setSavingCast] = React.useState(false);
   const [apiModels, setApiModels] = React.useState<ProjectApiModels>(() =>
     projectApiModelsFromProject(project),
   );
@@ -69,6 +90,20 @@ export function ProjectHeader({
   React.useEffect(() => {
     setApiModels(projectApiModelsFromProject(project));
   }, [project]);
+
+  React.useEffect(() => {
+    if (!castOpen) setDraftCast(avatarCast);
+  }, [avatarCast, castOpen]);
+
+  async function saveCast() {
+    setSavingCast(true);
+    try {
+      await onAvatarCastChange(draftCast);
+      setCastOpen(false);
+    } finally {
+      setSavingCast(false);
+    }
+  }
 
   async function saveApiModels() {
     if (!onApiModelsChange) {
@@ -84,6 +119,8 @@ export function ProjectHeader({
     }
   }
 
+  const formatSpec = getVideoFormatSpec(project.videoFormat);
+
   return (
     <header className="flex h-12 items-center gap-3 border-b border-border bg-background px-4">
       <Link
@@ -95,8 +132,9 @@ export function ProjectHeader({
       <div className="min-w-0 flex-1">
         <h1 className="truncate text-sm font-semibold">{project.title}</h1>
         <p className="truncate text-2xs text-muted-foreground">
-          {project.genre} · {project.visualStyle} · {project.voiceTone} ·{" "}
-          {project.targetDurationSeconds}s · {apiModelsSummary(projectApiModelsFromProject(project))}
+          {getVideoFormatSpec(project.videoFormat).shortLabel} · {project.genre} · {project.visualStyle} ·{" "}
+          {project.voiceTone} · {project.targetDurationSeconds}s ·{" "}
+          {apiModelsSummary(projectApiModelsFromProject(project))}
         </p>
       </div>
 
@@ -114,8 +152,10 @@ export function ProjectHeader({
 
       <StyleBibleDialog
         projectId={project.id}
+        videoFormat={project.videoFormat}
         initialBible={project.styleBible ?? null}
         initialAnchorUrl={project.anchorImageUrl ?? null}
+        onUpdated={onStyleBibleUpdated}
       />
 
       <Dialog open={apiOpen} onOpenChange={setApiOpen}>
@@ -149,65 +189,67 @@ export function ProjectHeader({
         </DialogContent>
       </Dialog>
 
-      <div className="flex items-center gap-1.5">
-        {avatar?.primaryImageUrl ? (
-          /* eslint-disable-next-line @next/next/no-img-element */
-          <img
-            src={avatar.primaryImageUrl}
-            alt={avatar.name}
-            className="h-7 w-7 rounded-full border border-border object-cover"
-            title={avatar.name}
+      <Dialog open={castOpen} onOpenChange={setCastOpen}>
+        <DialogTrigger asChild>
+          <Button variant="outline" size="sm" className="gap-1.5 pl-1.5">
+            <AvatarCastPreview
+              avatars={avatars}
+              selectedIds={avatarCast.selectedIds}
+              primaryId={avatarCast.primaryId}
+            />
+            <span className="max-w-[72px] truncate text-xs">
+              {avatarCast.selectedIds.length === 0
+                ? "Cast"
+                : avatarCast.selectedIds.length === 1
+                  ? avatars.find((a) => a.id === avatarCast.primaryId)?.name ?? "Cast"
+                  : `${avatarCast.selectedIds.length} characters`}
+            </span>
+          </Button>
+        </DialogTrigger>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Project cast</DialogTitle>
+            <DialogDescription>
+              Select who appears in this video. The star marks the main character.
+            </DialogDescription>
+          </DialogHeader>
+          <AvatarCastPicker
+            avatars={avatars}
+            value={draftCast}
+            onChange={setDraftCast}
+            variant="compact"
           />
-        ) : (
-          <span className="flex h-7 w-7 items-center justify-center rounded-full border border-dashed border-border text-muted-foreground">
-            <UserSquare className="h-3.5 w-3.5" />
-          </span>
-        )}
-        {avatars.length === 0 ? (
-          <Link href="/avatars">
-            <Button variant="outline" size="sm">
-              <UserSquare className="h-3.5 w-3.5" />
-              Add avatar
+          <div className="flex justify-end gap-2 pt-1">
+            <Button variant="ghost" size="sm" onClick={() => setCastOpen(false)}>
+              Cancel
             </Button>
-          </Link>
-        ) : (
-          <Select
-            value={avatar?.id ?? "none"}
-            onValueChange={(v) => onAvatarChange(v === "none" ? null : v)}
-          >
-            <SelectTrigger className="h-7 w-36 text-xs">
-              <SelectValue placeholder="Default character" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="none">No default character</SelectItem>
-              {avatars.map((a) => (
-                <SelectItem key={a.id} value={a.id}>
-                  {a.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-      </div>
+            <Button variant="primary" size="sm" onClick={saveCast} disabled={savingCast}>
+              {savingCast && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              Save
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
-      {finalVideoUrl && (
-        <Button variant="outline" size="sm" asChild>
-          <a
-            href={finalVideoUrl}
-            download={`${project.title.replace(/[^\w\s-]/g, "").trim() || "export"}.mp4`}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Download className="h-3.5 w-3.5" />
-            Download
-          </a>
-        </Button>
+      {avatars.length === 0 && (
+        <Link href="/avatars">
+          <Button variant="outline" size="sm">
+            <UserSquare className="h-3.5 w-3.5" />
+            Add avatar
+          </Button>
+        </Link>
       )}
 
+      <ExportHistoryDialog
+        exports={projectExports}
+        onRefresh={onRefreshExports}
+        refreshing={exportsRefreshing}
+      />
+
       <Link href={`/projects/${project.id}/youtube`}>
-        <Button variant="outline" size="sm">
-          <Youtube className="h-3.5 w-3.5" />
-          YouTube
+        <Button variant="outline" size="sm" title={`Cover & metadata — ${formatSpec.platformHint}`}>
+          <ImageIcon className="h-3.5 w-3.5" />
+          {formatSpec.id === "vertical" ? "Reels cover" : "Thumbnail"}
         </Button>
       </Link>
 
@@ -235,7 +277,7 @@ export function ProjectHeader({
           title={
             canExport
               ? "Export project as MP4"
-              : exportBlockerReason ?? "Generate audio + video for every block first"
+              : exportBlockerReason ?? "Generate video for every block first"
           }
         >
           {exporting ? (

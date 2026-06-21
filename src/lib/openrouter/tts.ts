@@ -1,4 +1,6 @@
 import { OPENROUTER_MODELS, openRouterFetch } from "./client";
+import { adjustSpeechSpeed } from "../ffmpeg";
+import { normalizeTtsSpeed } from "../narration-speed";
 import {
   DEFAULT_GEMINI_TTS_VOICE,
   isGeminiTtsModel,
@@ -177,7 +179,13 @@ export async function generateSpeech(input: TtsInput): Promise<SpeechResult> {
   const voice =
     input.voice ?? (gemini ? DEFAULT_GEMINI_TTS_VOICE : pickVoiceForTone(input.voiceTone ?? ""));
   const format = input.format ?? (gemini ? "pcm" : "mp3");
-  console.info(`[tts] model=${primaryModel} voice=${voice} format=${format}`);
+  const speed = normalizeTtsSpeed(input.speed ?? 1);
+  console.info(`[tts] model=${primaryModel} voice=${voice} format=${format} speed=${speed}`);
+
+  async function finish(result: { buffer: Buffer; filename: string }, modelUsed: string, usedFallback?: boolean) {
+    const adjusted = await adjustSpeechSpeed(result.buffer, result.filename, speed);
+    return { ...adjusted, modelUsed, usedFallback };
+  }
 
   try {
     const result = await requestSpeechOnce({
@@ -185,9 +193,9 @@ export async function generateSpeech(input: TtsInput): Promise<SpeechResult> {
       voice,
       model: primaryModel,
       format,
-      speed: input.speed,
+      speed: speed !== 1 ? speed : undefined,
     });
-    return { ...result, modelUsed: primaryModel };
+    return finish(result, primaryModel);
   } catch (err) {
     const raw = err instanceof Error ? err.message : String(err);
     const canFallback =
@@ -206,11 +214,11 @@ export async function generateSpeech(input: TtsInput): Promise<SpeechResult> {
         console.warn(
           `[tts] Gemini blocked/failed — used Kokoro fallback. Original: ${raw.slice(0, 160)}`,
         );
-        return {
-          ...result,
-          modelUsed: KOKORO_TTS_MODEL,
-          usedFallback: true,
-        };
+        return finish(
+          result,
+          KOKORO_TTS_MODEL,
+          true,
+        );
       } catch (fallbackErr) {
         const fallbackRaw =
           fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);

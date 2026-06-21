@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "@/lib/db";
 import { tryUser } from "@/lib/auth";
+import { deleteAvatarMedia } from "@/lib/storage";
 
 export const dynamic = "force-dynamic";
 
@@ -53,6 +54,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
   const row = await getOwned(params.id, userId);
   if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+  await deleteAvatarMedia(userId, row.id, row.imageUrls);
   await db.delete(schema.avatars).where(eq(schema.avatars.id, row.id));
   await db
     .update(schema.projects)

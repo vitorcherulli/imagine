@@ -9,16 +9,26 @@ import {
 } from "@/lib/block-video";
 import { saveBuffer, withCacheBuster } from "@/lib/storage";
 import { resolveProjectApiModels } from "@/lib/project-api-models";
+import { parseTtsSpeedFromRequest } from "@/lib/narration-speed-server";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 900;
 
-export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const userId = await tryUser();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const owned = await getBlockForUser(params.id, userId);
   if (!owned) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  const ttsSpeed = await parseTtsSpeedFromRequest(req, owned.project);
+
+  if (owned.block.status === "generating" || owned.block.status === "video_generating") {
+    return NextResponse.json(
+      { error: "Media generation already in progress for this block." },
+      { status: 409 },
+    );
+  }
 
   await setBlockStatus(params.id, { status: "generating", errorMessage: null });
 
@@ -38,6 +48,7 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
         voice,
         model: models.ttsModel,
         voiceTone: owned.project.voiceTone,
+        speed: ttsSpeed,
       });
       const audioUrl = await saveBuffer(projectId, blockId, speech.filename, speech.buffer);
       const probed = await probeAudioDurationSeconds(audioUrl);

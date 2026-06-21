@@ -1,5 +1,10 @@
 import { z } from "zod";
 import type { Avatar, Project, StoryBlock } from "./db/schema";
+import { normalizeProjectIdentity } from "./project-identity";
+import {
+  ENGLISH_ONLY_GENERATION_LINE,
+  ENGLISH_VISUAL_PROMPT_LINE,
+} from "./generation-language";
 
 export interface StyleBible {
   colorPalette: string;
@@ -134,8 +139,8 @@ export function formatStyleBibleForPrompt(bible: StyleBible | null): string {
   return lines.join("\n") + "\n\n";
 }
 
-export function buildStyleBibleSystemPrompt(): string {
-  return [
+export function buildStyleBibleSystemPrompt(primaryCharacterName?: string | null): string {
+  const lines = [
     "You are a senior art director defining the EDITORIAL LINE for a short narrative video with MULTIPLE different locations.",
     "Given a project brief and the story blocks, produce ONE style bible that every scene must follow for LOOK — not for geography.",
     "Output a JSON object with EXACTLY these string fields:",
@@ -146,43 +151,78 @@ export function buildStyleBibleSystemPrompt(): string {
     "  cinematography — framing/lens/depth-of-field language",
     "  timeOfDay     — overall time-feel phrase for the film",
     "Constraints:",
+    ENGLISH_ONLY_GENERATION_LINE,
+    ENGLISH_VISUAL_PROMPT_LINE,
     "- Each field must be a SINGLE plain-text string, no nesting, no arrays, no quotes inside, no newlines.",
     "- The story has SEVERAL different environments — the bible unifies how they LOOK, not WHERE they are.",
     "- Be specific and visually rich — these strings will be injected verbatim into every image prompt.",
     "- Respond ONLY with the JSON object, no prose.",
-  ].join("\n");
+  ];
+  if (primaryCharacterName) {
+    lines.splice(
+      9,
+      0,
+      `- This project stars ONE main character: "${primaryCharacterName}". The editorial line MUST harmonize palette, lighting and wardrobe styling with that character's look (skin tone, hair, outfit vibe, persona).`,
+      `- Use primary_character notes from the brief — do not invent a different persona.`,
+    );
+  }
+  return lines.join("\n");
 }
 
 export function buildStyleBibleUserPrompt(input: {
   project: Pick<
     Project,
-    "title" | "storyDescription" | "genre" | "visualStyle" | "voiceTone"
+    | "title"
+    | "projectIdentity"
+    | "storyDescription"
+    | "genre"
+    | "visualStyle"
+    | "voiceTone"
+    | "videoFormat"
   >;
   characters: Array<Pick<Avatar, "name" | "description">>;
+  primaryCharacter?: Pick<Avatar, "name" | "description"> | null;
   blockSummaries: Array<{
     position: number;
     segmentType: string;
     visualPrompt: string;
     locationTag?: string | null;
   }>;
+  resolvedIdentity?: string;
 }): string {
+  const { primaryCharacter, characters, resolvedIdentity, ...rest } = input;
+  const identity = resolvedIdentity ?? normalizeProjectIdentity(rest.project.projectIdentity);
   return JSON.stringify(
     {
-      title: input.project.title,
-      story_description: input.project.storyDescription,
-      genre: input.project.genre,
-      visual_style: input.project.visualStyle,
-      voice_tone: input.project.voiceTone,
-      characters: input.characters.map((c) => ({
-        name: c.name,
-        description: c.description ?? undefined,
-      })),
-      block_visuals: input.blockSummaries.map((b) => ({
+      title: rest.project.title,
+      ...(identity ? { project_identity: identity } : {}),
+      story_description: rest.project.storyDescription,
+      genre: rest.project.genre,
+      visual_style: rest.project.visualStyle,
+      voice_tone: rest.project.voiceTone,
+      video_format: rest.project.videoFormat ?? "horizontal",
+      ...(primaryCharacter
+        ? {
+            primary_character: {
+              name: primaryCharacter.name,
+              description: primaryCharacter.description ?? undefined,
+            },
+          }
+        : characters.length > 0
+          ? {
+              characters: characters.map((c) => ({
+                name: c.name,
+                description: c.description ?? undefined,
+              })),
+            }
+          : {}),
+      block_visuals: rest.blockSummaries.map((b) => ({
         position: b.position,
         segment: b.segmentType,
         location: b.locationTag ?? undefined,
         visual: b.visualPrompt,
       })),
+      output_language: "en",
     },
     null,
     2,
@@ -190,25 +230,44 @@ export function buildStyleBibleUserPrompt(input: {
 }
 
 /**
- * Abstract editorial reference — color grade + light + atmosphere only.
- * Deliberately NO recognizable location so it won't force every scene into one place.
+ * Editorial reference — color grade + light + atmosphere.
+ * When a project avatar is set, the character is the focal subject using reference photos.
  */
 export function buildEditorialReferencePrompt(input: {
-  project: Pick<Project, "visualStyle" | "genre">;
+  project: Pick<Project, "visualStyle" | "genre" | "projectIdentity">;
   bible: StyleBible;
+  primaryCharacter?: Pick<Avatar, "name" | "description"> | null;
 }): string {
-  const { project, bible } = input;
-  return [
+  const { project, bible, primaryCharacter } = input;
+  const identity = normalizeProjectIdentity(project.projectIdentity);
+  const lines = [
     formatStyleBibleForPrompt(bible).trim(),
     "",
     `Visual style: ${project.visualStyle}.`,
     `Genre: ${project.genre}.`,
-    "Abstract cinematic mood board panel for editorial reference.",
-    "Show color palette swatches, light quality, atmospheric haze, film grain and lens character.",
-    "NO characters, NO faces, NO text, NO logos, NO readable locations or geography.",
-    "Do not depict a garden, room, forest, tunnel or any specific place — only the LOOK of the film.",
-    "This image defines color grade and lighting mood for a multi-location story.",
-  ].join("\n");
+    ...(identity ? [`Series/brand identity: ${identity}.`] : []),
+  ];
+
+  if (primaryCharacter) {
+    const desc = primaryCharacter.description?.trim();
+    lines.push(
+      "Cinematic editorial reference / mood board for this short film.",
+      `Main character "${primaryCharacter.name}" is the focal subject — match their face, hair, skin tone, body type and styling EXACTLY to the provided reference photos.`,
+      desc ? `Character notes: ${desc}.` : "",
+      "Show the character in a evocative hero pose that sets the film's color grade, lighting mood and atmosphere.",
+      "NO text, NO logos, NO watermarks. Background may be abstract or minimal — character identity is priority.",
+    );
+  } else {
+    lines.push(
+      "Abstract cinematic mood board panel for editorial reference.",
+      "Show color palette swatches, light quality, atmospheric haze, film grain and lens character.",
+      "NO characters, NO faces, NO text, NO logos, NO readable locations or geography.",
+      "Do not depict a garden, room, forest, tunnel or any specific place — only the LOOK of the film.",
+    );
+  }
+
+  lines.push("This image defines color grade and lighting mood for a multi-location story.");
+  return lines.filter(Boolean).join("\n");
 }
 
 /** @deprecated use buildEditorialReferencePrompt */

@@ -6,6 +6,7 @@ import {
   generateAndSaveAnchor,
   StyleBibleError,
 } from "@/lib/style-bible-server";
+import { deleteMediaByPublicUrl } from "@/lib/storage";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -44,6 +45,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
   const project = await getOwnedProject(params.id, userId);
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+  if (project.anchorImageUrl) await deleteMediaByPublicUrl(project.anchorImageUrl);
   await db
     .update(schema.projects)
     .set({ anchorImageUrl: null, anchorImagePrompt: null, updatedAt: new Date() })

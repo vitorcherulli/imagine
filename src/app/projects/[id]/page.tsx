@@ -4,6 +4,7 @@ import { auth } from "@clerk/nextjs/server";
 import { db, schema } from "@/lib/db";
 import { Sidebar } from "@/components/Sidebar";
 import { ProjectEditor } from "@/components/ProjectEditor";
+import { buildProjectExportItems } from "@/lib/export-history";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +25,7 @@ export default async function ProjectPage({ params }: { params: { id: string } }
     .where(eq(schema.storyBlocks.projectId, project.id))
     .orderBy(asc(schema.storyBlocks.position));
 
-  const [projects, avatars, projectAvatar] = await Promise.all([
+  const [projects, avatars, projectAvatar, projectDna, exportRows] = await Promise.all([
     db
       .select()
       .from(schema.projects)
@@ -43,7 +44,19 @@ export default async function ProjectPage({ params }: { params: { id: string } }
           .limit(1)
           .then((rows) => rows[0] ?? null)
       : Promise.resolve(null),
+    db
+      .select()
+      .from(schema.projectDna)
+      .where(eq(schema.projectDna.userId, userId))
+      .orderBy(desc(schema.projectDna.updatedAt)),
+    db
+      .select()
+      .from(schema.exports)
+      .where(eq(schema.exports.projectId, project.id))
+      .orderBy(asc(schema.exports.createdAt)),
   ]);
+
+  const initialExports = buildProjectExportItems(exportRows, project.title, project.videoFormat);
 
   return (
     <div className="flex h-screen w-full">
@@ -51,7 +64,9 @@ export default async function ProjectPage({ params }: { params: { id: string } }
       <ProjectEditor
         project={project}
         initialBlocks={blocks}
+        initialExports={initialExports}
         avatars={avatars}
+        projectDna={projectDna}
         initialAvatar={projectAvatar}
       />
     </div>

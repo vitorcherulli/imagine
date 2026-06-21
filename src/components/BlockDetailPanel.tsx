@@ -11,9 +11,21 @@ import {
   AlertTriangle,
   RefreshCw,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Waves,
+  Settings2,
+  FileText,
+  Volume2,
+  Layers,
+  Clock,
+  UserRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  readBlockPanelCollapsed,
+  writeBlockPanelCollapsed,
+} from "@/lib/layout-preferences";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -31,12 +43,14 @@ import { useToast } from "@/components/ui/use-toast";
 import type { Block } from "@/components/timeline/types";
 import { avatarSelectValue } from "@/components/timeline/types";
 import type { Avatar } from "@/lib/db/schema";
+import { getVideoFormatSpec, type VideoFormat } from "@/lib/video-format";
 
 interface Props {
   block: Block | null;
   avatars: Avatar[];
   projectAvatarId: string | null;
   projectAvatarName?: string | null;
+  videoFormat?: VideoFormat | string | null;
   onPatched: (id: string, patch: Partial<Block>) => void;
   onRemoved: (id: string) => void;
 }
@@ -46,9 +60,11 @@ export function BlockDetailPanel({
   avatars,
   projectAvatarId,
   projectAvatarName,
+  videoFormat = "horizontal",
   onPatched,
   onRemoved,
 }: Props) {
+  const formatSpec = getVideoFormatSpec(videoFormat);
   const { toast } = useToast();
   const [narrativeText, setNarrativeText] = React.useState(block?.narrativeText ?? "");
   const [visualPrompt, setVisualPrompt] = React.useState(block?.visualPrompt ?? "");
@@ -65,6 +81,7 @@ export function BlockDetailPanel({
   const [savingVolume, setSavingVolume] = React.useState(false);
   const [savingSceneVolume, setSavingSceneVolume] = React.useState(false);
   const [savingAvatar, setSavingAvatar] = React.useState(false);
+  const [panelCollapsed, setPanelCollapsed] = React.useState(false);
   const lastBlockIdRef = React.useRef<string | null>(block?.id ?? null);
   const lastServerRef = React.useRef<{
     narrativeText: string;
@@ -154,13 +171,64 @@ export function BlockDetailPanel({
     block?.characterName,
   ]);
 
+  React.useEffect(() => {
+    setPanelCollapsed(readBlockPanelCollapsed());
+  }, []);
+
+  function togglePanelCollapsed() {
+    setPanelCollapsed((prev) => {
+      const next = !prev;
+      writeBlockPanelCollapsed(next);
+      return next;
+    });
+  }
+
+  if (panelCollapsed) {
+    return (
+      <aside className="relative flex h-full w-10 shrink-0 flex-col items-center border-l border-border bg-panel py-3">
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={togglePanelCollapsed}
+          title="Expand block panel"
+        >
+          <ChevronLeft className="h-3.5 w-3.5" />
+        </Button>
+        {block ? (
+          <span
+            className="mt-4 text-2xs font-medium text-muted-foreground [writing-mode:vertical-rl]"
+            title={`Block #${block.position + 1}`}
+          >
+            #{block.position + 1}
+          </span>
+        ) : (
+          <span title="Block details">
+            <ImageIcon className="mt-4 h-4 w-4 text-muted-foreground" />
+          </span>
+        )}
+      </aside>
+    );
+  }
+
   if (!block) {
     return (
-      <aside className="flex h-full w-80 shrink-0 flex-col items-center justify-center border-l border-border bg-panel p-4 text-center">
-        <ImageIcon className="h-5 w-5 text-muted-foreground" />
-        <p className="mt-2 text-2xs text-muted-foreground">
-          Select a block on the timeline to edit it.
-        </p>
+      <aside className="relative flex h-full w-72 shrink-0 flex-col overflow-hidden border-l border-border bg-panel">
+        <div className="flex items-center justify-end border-b border-border px-2 py-1">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={togglePanelCollapsed}
+            title="Collapse block panel"
+          >
+            <ChevronRight className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+        <div className="flex flex-1 flex-col items-center justify-center p-4 text-center">
+          <ImageIcon className="h-5 w-5 text-muted-foreground" />
+          <p className="mt-2 text-2xs text-muted-foreground">
+            Select a block on the timeline to edit it.
+          </p>
+        </div>
       </aside>
     );
   }
@@ -336,230 +404,381 @@ export function BlockDetailPanel({
   const generating =
     block.status === "generating" || block.status.endsWith("_generating");
 
+  const mediaReadyCount = [
+    block.keyframeUrl,
+    block.videoUrl,
+    block.audioUrl,
+    block.sceneAudioUrl,
+  ].filter(Boolean).length;
+
   return (
-    <aside className="flex h-full w-80 shrink-0 flex-col overflow-hidden border-l border-border bg-panel">
-      <div className="border-b border-border px-3 py-2">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-sm font-semibold">Block #{block.position + 1}</h3>
-            <p className="text-2xs text-muted-foreground">{block.segmentType}</p>
+    <aside className="relative flex h-full w-72 shrink-0 flex-col overflow-hidden border-l border-border bg-panel">
+      <div className="border-b border-border px-2.5 py-1.5">
+        <div className="flex items-center gap-1.5">
+          <div className="flex min-w-0 flex-1 items-center gap-1.5">
+            <h3 className="truncate text-xs font-semibold">Block #{block.position + 1}</h3>
+            <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px] capitalize">
+              {block.segmentType}
+            </Badge>
+            {dirty && (
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warning" title="Unsaved changes" />
+            )}
           </div>
-          <Button variant="ghost" size="icon-sm" onClick={remove} title="Delete block">
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
+          <div className="flex shrink-0 items-center">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={save}
+              disabled={!dirty || saving}
+              title="Save changes"
+            >
+              {saving ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Save className="h-3.5 w-3.5" />
+              )}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={togglePanelCollapsed}
+              title="Collapse block panel"
+            >
+              <ChevronRight className="h-3.5 w-3.5" />
+            </Button>
+            <Button variant="ghost" size="icon-sm" onClick={remove} title="Delete block">
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          </div>
         </div>
         {block.status === "error" && block.errorMessage && (
-          <div className="mt-1.5 flex items-start gap-1 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1 text-2xs text-destructive">
-            <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
-            <span className="line-clamp-3">{block.errorMessage}</span>
+          <div className="mt-1 flex items-start gap-1 rounded border border-destructive/30 bg-destructive/10 px-1.5 py-0.5 text-[10px] text-destructive">
+            <AlertTriangle className="mt-0.5 h-2.5 w-2.5 shrink-0" />
+            <span className="line-clamp-2">{block.errorMessage}</span>
           </div>
         )}
         {generating && (
-          <div className="mt-1.5 flex items-center gap-1.5 rounded-md border border-warning/30 bg-warning/10 px-2 py-1 text-2xs text-warning">
-            <Loader2 className="h-3 w-3 animate-spin" />
-            <span>Generating… stay on the page.</span>
+          <div className="mt-1 flex items-center gap-1 rounded border border-warning/30 bg-warning/10 px-1.5 py-0.5 text-[10px] text-warning">
+            <Loader2 className="h-2.5 w-2.5 animate-spin" />
+            <span>Generating…</span>
           </div>
         )}
       </div>
 
-      <div className="flex-1 space-y-3 overflow-auto p-3 scrollbar-thin">
-        <div>
-          <Label>Segment</Label>
-          <Select value={segmentType} onValueChange={setSegmentType}>
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {["intro", "development", "climax", "resolution"].map((t) => (
-                <SelectItem key={t} value={t}>
-                  {t}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div>
-          <div className="flex items-center justify-between">
-            <Label>Character in scene</Label>
-            {savingAvatar && (
-              <span className="text-2xs text-muted-foreground">Saving…</span>
-            )}
+      <div className="flex-1 space-y-1 overflow-auto p-1.5 scrollbar-thin">
+        <BlockPanelSection
+          id="setup"
+          icon={<Settings2 className="h-3 w-3" />}
+          title="Setup"
+          summary={`${segmentType} · ${durationSeconds}s`}
+        >
+          <div className="grid grid-cols-2 gap-1.5">
+            <div>
+              <Label className="mb-0.5 flex items-center gap-1 text-[10px]">
+                <Layers className="h-2.5 w-2.5" />
+                Segment
+              </Label>
+              <Select value={segmentType} onValueChange={setSegmentType}>
+                <SelectTrigger className="h-7 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {["intro", "development", "climax", "resolution"].map((t) => (
+                    <SelectItem key={t} value={t}>
+                      {t}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="mb-0.5 flex items-center gap-1 text-[10px]">
+                <Clock className="h-2.5 w-2.5" />
+                Duration
+              </Label>
+              <Input
+                type="number"
+                min={2}
+                max={60}
+                value={durationSeconds}
+                onChange={(e) => setDurationSeconds(Number(e.target.value))}
+                className="h-7 text-xs"
+              />
+            </div>
           </div>
-          <Select value={avatarChoice} onValueChange={saveAvatarChoice} disabled={savingAvatar}>
-            <SelectTrigger>
-              <SelectValue placeholder="Choose character" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__inherit__">
-                Project default{projectAvatarName ? ` (${projectAvatarName})` : ""}
-              </SelectItem>
-              <SelectItem value="__none__">No character / scenery only</SelectItem>
-              {avatars.map((a) => (
-                <SelectItem key={a.id} value={a.id}>
-                  {a.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {block.characterName && avatarChoice !== "__none__" && (
-            <p className="mt-1 text-2xs text-muted-foreground">
-              Story assigned: {block.characterName}
-            </p>
-          )}
-          <p className="mt-1 text-2xs text-muted-foreground">
-            Used for keyframe and video generation on this block.
-          </p>
-        </div>
-
-        <div>
-          <div className="flex items-center justify-between">
-            <Label>Duration (seconds)</Label>
-            <span className="text-2xs text-muted-foreground">{durationSeconds}s</span>
-          </div>
-          <Input
-            type="number"
-            min={2}
-            max={60}
-            value={durationSeconds}
-            onChange={(e) => setDurationSeconds(Number(e.target.value))}
-          />
-        </div>
-
-        <CollapsibleTextField
-          label="Narration / script"
-          storageKey="block-detail:narration-collapsed"
-          value={narrativeText}
-          onChange={setNarrativeText}
-          minHeight="min-h-[110px]"
-        />
-
-        <div>
-          <div className="flex items-center justify-between">
-            <Label>Block narration volume</Label>
-            <span className="text-2xs text-muted-foreground">
-              {audioVolume}%{savingVolume ? " · saving…" : ""}
-            </span>
-          </div>
-          <Slider
-            value={[audioVolume]}
-            min={0}
-            max={100}
-            step={1}
-            onValueChange={(v) => saveAudioVolume(v[0])}
-            className="mt-1"
-          />
-          <p className="mt-1 text-2xs text-muted-foreground">
-            Individual level for this clip. Combined with track + master on the timeline.
-          </p>
-        </div>
-
-        <div>
-          <div className="flex items-center justify-between">
-            <Label className="flex items-center gap-1">
-              <Waves className="h-3 w-3 text-cyan-400" />
-              Scene audio volume
+          <div className="mt-1.5">
+            <Label
+              className="mb-0.5 flex items-center gap-1 text-[10px]"
+              title="Used for keyframe and video generation"
+            >
+              <UserRound className="h-2.5 w-2.5" />
+              Character
+              {savingAvatar && <Loader2 className="ml-1 h-2.5 w-2.5 animate-spin" />}
             </Label>
-            <span className="text-2xs text-muted-foreground">
-              {sceneAudioVolume}%{savingSceneVolume ? " · saving…" : ""}
-            </span>
+            <Select
+              value={avatarChoice}
+              onValueChange={saveAvatarChoice}
+              disabled={savingAvatar}
+            >
+              <SelectTrigger className="h-7 text-xs">
+                <SelectValue placeholder="Choose character" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__inherit__">
+                  Project default{projectAvatarName ? ` (${projectAvatarName})` : ""}
+                </SelectItem>
+                <SelectItem value="__none__">No character</SelectItem>
+                {avatars.map((a) => (
+                  <SelectItem key={a.id} value={a.id}>
+                    {a.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
-          <Slider
-            value={[sceneAudioVolume]}
-            min={0}
-            max={100}
-            step={1}
-            onValueChange={(v) => saveSceneAudioVolume(v[0])}
-            className="mt-1"
-            disabled={!block.sceneAudioUrl}
-          />
-          <p className="mt-1 text-2xs text-muted-foreground">
-            {block.sceneAudioUrl
-              ? "Ambient/character audio extracted from the AI-generated video clip."
-              : "No scene audio (model returned silent video). Regenerate the video to retry."}
-          </p>
-        </div>
+        </BlockPanelSection>
 
-        <CollapsibleTextField
-          label="Visual prompt"
-          storageKey="block-detail:visual-collapsed"
-          value={visualPrompt}
-          onChange={setVisualPrompt}
-          minHeight="min-h-[80px]"
-        />
-
-        <div className="space-y-2 rounded-md border border-border bg-background p-2">
-          <h4 className="text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Generated media
-          </h4>
-          <MediaRow
-            label="Keyframe"
-            icon={<ImageIcon className="h-3 w-3" />}
-            url={block.keyframeUrl ?? null}
-            kind="image"
-            onRegen={() => regenerate("keyframe")}
-          />
-          <MediaRow
-            label="Video"
-            icon={<Film className="h-3 w-3" />}
-            url={block.videoUrl ?? null}
-            kind="video"
-            onRegen={() => regenerate("video")}
-          />
-          <MediaRow
+        <BlockPanelSection
+          id="content"
+          icon={<FileText className="h-3 w-3" />}
+          title="Script & visual"
+          summary={
+            narrativeText
+              ? narrativeText.slice(0, 40) + (narrativeText.length > 40 ? "…" : "")
+              : "Empty"
+          }
+        >
+          <CollapsibleTextField
             label="Narration"
-            icon={<AudioLines className="h-3 w-3" />}
-            url={block.audioUrl ?? null}
-            kind="audio"
-            onRegen={() => regenerate("audio")}
+            storageKey="block-detail:narration-collapsed"
+            defaultCollapsed
+            value={narrativeText}
+            onChange={setNarrativeText}
+            minHeight="min-h-[72px]"
           />
-          <MediaRow
-            label="Scene audio"
-            icon={<Waves className="h-3 w-3" />}
-            url={block.sceneAudioUrl ?? null}
-            kind="audio"
-            onRegen={() => regenerate("video")}
-            regenLabel="Regenerate video"
+          <CollapsibleTextField
+            label="Visual prompt"
+            storageKey="block-detail:visual-collapsed"
+            defaultCollapsed
+            value={visualPrompt}
+            onChange={setVisualPrompt}
+            minHeight="min-h-[56px]"
+            className="mt-1.5"
           />
-          <div className="flex justify-end pt-1">
+        </BlockPanelSection>
+
+        <BlockPanelSection
+          id="audio"
+          icon={<Volume2 className="h-3 w-3" />}
+          title="Audio levels"
+          summary={`Narration ${audioVolume}% · Scene ${sceneAudioVolume}%`}
+          defaultCollapsed
+        >
+          <div className="space-y-2">
+            <CompactVolumeSlider
+              icon={<AudioLines className="h-2.5 w-2.5" />}
+              label="Narration"
+              value={audioVolume}
+              saving={savingVolume}
+              onChange={saveAudioVolume}
+              title="Clip level — combined with track + master on timeline"
+            />
+            <CompactVolumeSlider
+              icon={<Waves className="h-2.5 w-2.5 text-cyan-400" />}
+              label="Scene"
+              value={sceneAudioVolume}
+              saving={savingSceneVolume}
+              onChange={saveSceneAudioVolume}
+              disabled={!block.sceneAudioUrl}
+              title={
+                block.sceneAudioUrl
+                  ? "Ambient audio from the generated video"
+                  : "No scene audio — regenerate video to retry"
+              }
+            />
+          </div>
+        </BlockPanelSection>
+
+        <BlockPanelSection
+          id="media"
+          icon={<Film className="h-3 w-3" />}
+          title="Generated media"
+          summary={`${mediaReadyCount}/4 ready`}
+          defaultCollapsed
+        >
+          <div className="space-y-1">
+            <MediaRow
+              label="Keyframe"
+              icon={<ImageIcon className="h-3 w-3" />}
+              url={block.keyframeUrl ?? null}
+              kind="image"
+              previewClass={cn(
+                "mt-1 w-full rounded object-contain bg-black",
+                formatSpec.previewAspectClass,
+                formatSpec.id === "vertical"
+                  ? "mx-auto max-h-36 max-w-[100px]"
+                  : "h-14 object-cover",
+              )}
+              onRegen={() => regenerate("keyframe")}
+            />
+            <MediaRow
+              label="Video"
+              icon={<Film className="h-3 w-3" />}
+              url={block.videoUrl ?? null}
+              kind="video"
+              previewClass={cn(
+                "mt-1 w-full rounded bg-black object-contain",
+                formatSpec.previewAspectClass,
+                formatSpec.id === "vertical" ? "mx-auto max-h-40 max-w-[100px]" : "h-20",
+              )}
+              onRegen={() => regenerate("video")}
+            />
+            <MediaRow
+              label="Narration"
+              icon={<AudioLines className="h-3 w-3" />}
+              url={block.audioUrl ?? null}
+              kind="audio"
+              onRegen={() => regenerate("audio")}
+            />
+            <MediaRow
+              label="Scene audio"
+              icon={<Waves className="h-3 w-3" />}
+              url={block.sceneAudioUrl ?? null}
+              kind="audio"
+              onRegen={() => regenerate("video")}
+              regenLabel="Regenerate video"
+            />
             <Button
               variant="primary"
               size="sm"
+              className="mt-1 w-full"
               onClick={() => regenerate("media")}
               disabled={generating}
             >
               <RefreshCw className="h-3 w-3" />
-              Regen all media
+              Regen all
             </Button>
           </div>
-        </div>
-      </div>
-
-      <div className="flex items-center justify-between border-t border-border px-3 py-2">
-        <Badge variant={dirty ? "warning" : "outline"}>
-          {dirty ? "Unsaved" : "Saved"}
-        </Badge>
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={save}
-          disabled={!dirty || saving}
-        >
-          {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
-          Save changes
-        </Button>
+        </BlockPanelSection>
       </div>
     </aside>
   );
 }
 
-function readCollapsed(storageKey: string): boolean {
+function readCollapsed(storageKey: string, defaultCollapsed = false): boolean {
   try {
-    if (typeof window === "undefined") return false;
-    return localStorage.getItem(storageKey) === "1";
+    if (typeof window === "undefined") return defaultCollapsed;
+    const stored = localStorage.getItem(storageKey);
+    if (stored === null) return defaultCollapsed;
+    return stored === "1";
   } catch {
-    return false;
+    return defaultCollapsed;
   }
+}
+
+function writeCollapsed(storageKey: string, collapsed: boolean): void {
+  try {
+    if (collapsed) localStorage.setItem(storageKey, "1");
+    else localStorage.removeItem(storageKey);
+  } catch {
+    // ignore
+  }
+}
+
+function BlockPanelSection({
+  id,
+  icon,
+  title,
+  summary,
+  defaultCollapsed = false,
+  children,
+}: {
+  id: string;
+  icon: React.ReactNode;
+  title: string;
+  summary?: string;
+  defaultCollapsed?: boolean;
+  children: React.ReactNode;
+}) {
+  const storageKey = `block-detail:section-${id}`;
+  const [collapsed, setCollapsed] = React.useState(defaultCollapsed);
+
+  React.useEffect(() => {
+    setCollapsed(readCollapsed(storageKey, defaultCollapsed));
+  }, [storageKey, defaultCollapsed]);
+
+  function toggle() {
+    setCollapsed((prev) => {
+      const next = !prev;
+      writeCollapsed(storageKey, next);
+      return next;
+    });
+  }
+
+  return (
+    <div className="overflow-hidden rounded-md border border-border bg-background">
+      <button
+        type="button"
+        onClick={toggle}
+        className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left hover:bg-muted/40"
+        aria-expanded={!collapsed}
+      >
+        <span className="text-muted-foreground">{icon}</span>
+        <span className="flex-1 text-[11px] font-medium">{title}</span>
+        {collapsed && summary && (
+          <span className="max-w-[45%] truncate text-[10px] text-muted-foreground">{summary}</span>
+        )}
+        <ChevronDown
+          className={cn(
+            "h-3 w-3 shrink-0 text-muted-foreground transition-transform",
+            !collapsed && "rotate-180",
+          )}
+        />
+      </button>
+      {!collapsed && <div className="border-t border-border px-2 py-1.5">{children}</div>}
+    </div>
+  );
+}
+
+function CompactVolumeSlider({
+  icon,
+  label,
+  value,
+  saving,
+  disabled,
+  title,
+  onChange,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: number;
+  saving?: boolean;
+  disabled?: boolean;
+  title?: string;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <div title={title}>
+      <div className="mb-0.5 flex items-center justify-between gap-1">
+        <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+          {icon}
+          {label}
+        </span>
+        <span className="font-mono text-[10px] text-muted-foreground">
+          {value}%{saving ? " …" : ""}
+        </span>
+      </div>
+      <Slider
+        value={[value]}
+        min={0}
+        max={100}
+        step={1}
+        disabled={disabled}
+        onValueChange={(v) => onChange(v[0])}
+        className="h-1"
+      />
+    </div>
+  );
 }
 
 function CollapsibleTextField({
@@ -568,44 +787,43 @@ function CollapsibleTextField({
   value,
   onChange,
   minHeight,
+  defaultCollapsed = false,
+  className,
 }: {
   label: string;
   storageKey: string;
   value: string;
   onChange: (value: string) => void;
   minHeight: string;
+  defaultCollapsed?: boolean;
+  className?: string;
 }) {
-  const [collapsed, setCollapsed] = React.useState(false);
+  const [collapsed, setCollapsed] = React.useState(defaultCollapsed);
 
   React.useEffect(() => {
-    setCollapsed(readCollapsed(storageKey));
-  }, [storageKey]);
+    setCollapsed(readCollapsed(storageKey, defaultCollapsed));
+  }, [storageKey, defaultCollapsed]);
 
   function toggle() {
     setCollapsed((prev) => {
       const next = !prev;
-      try {
-        if (next) localStorage.setItem(storageKey, "1");
-        else localStorage.removeItem(storageKey);
-      } catch {
-        // ignore quota / private mode
-      }
+      writeCollapsed(storageKey, next);
       return next;
     });
   }
 
   return (
-    <div>
+    <div className={className}>
       <button
         type="button"
         onClick={toggle}
-        className="flex w-full items-center justify-between gap-2 rounded-sm text-left hover:bg-muted/50"
+        className="flex w-full items-center justify-between gap-1 rounded-sm text-left hover:bg-muted/30"
         aria-expanded={!collapsed}
       >
-        <Label className="cursor-pointer">{label}</Label>
+        <Label className="cursor-pointer text-[10px]">{label}</Label>
         <ChevronDown
           className={cn(
-            "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
+            "h-3 w-3 shrink-0 text-muted-foreground transition-transform",
             !collapsed && "rotate-180",
           )}
         />
@@ -614,10 +832,10 @@ function CollapsibleTextField({
         <Textarea
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          className={cn("mt-1", minHeight)}
+          className={cn("mt-0.5 min-h-0 text-xs", minHeight)}
         />
       ) : (
-        <p className="mt-1 line-clamp-2 rounded-md border border-border bg-background px-2 py-1.5 text-2xs text-muted-foreground">
+        <p className="mt-0.5 line-clamp-1 rounded border border-border/60 bg-panel px-1.5 py-1 text-[10px] text-muted-foreground">
           {value || "Empty"}
         </p>
       )}
@@ -630,6 +848,7 @@ function MediaRow({
   icon,
   url,
   kind,
+  previewClass,
   onRegen,
   regenLabel,
 }: {
@@ -637,34 +856,39 @@ function MediaRow({
   icon: React.ReactNode;
   url: string | null;
   kind: "image" | "video" | "audio";
+  previewClass?: string;
   onRegen: () => void;
   regenLabel?: string;
 }) {
   return (
-    <div className="rounded border border-border bg-panel p-1.5">
-      <div className="flex items-center justify-between gap-1.5">
-        <div className="flex items-center gap-1 text-2xs">
+    <div className="rounded border border-border/80 bg-panel px-1.5 py-1">
+      <div className="flex items-center justify-between gap-1">
+        <div className="flex min-w-0 items-center gap-1 text-[10px]">
           {icon}
-          <span>{label}</span>
-          <Badge variant={url ? "success" : "default"} className="ml-1">
-            {url ? "ready" : "missing"}
+          <span className="truncate">{label}</span>
+          <Badge
+            variant={url ? "success" : "default"}
+            className="ml-0.5 shrink-0 px-1 py-0 text-[9px]"
+          >
+            {url ? "✓" : "—"}
           </Badge>
         </div>
         <Button
           variant="ghost"
           size="icon-sm"
+          className="h-5 w-5"
           onClick={onRegen}
           title={regenLabel ?? `Regenerate ${label}`}
         >
-          <RefreshCw className="h-3 w-3" />
+          <RefreshCw className="h-2.5 w-2.5" />
         </Button>
       </div>
       {url && kind === "image" && (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={url} alt="" className="mt-1 h-16 w-full rounded object-cover" />
+        <img src={url} alt="" className={previewClass ?? "mt-1 h-16 w-full rounded object-cover"} />
       )}
       {url && kind === "video" && (
-        <video src={url} controls className="mt-1 h-24 w-full rounded bg-black" />
+        <video src={url} controls className={previewClass ?? "mt-1 h-24 w-full rounded bg-black"} />
       )}
       {url && kind === "audio" && (
         <audio src={url} controls className="mt-1 w-full" />

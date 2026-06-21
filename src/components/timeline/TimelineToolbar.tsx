@@ -17,6 +17,17 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  NARRATION_SPEED_OPTIONS,
+  type NarrationSpeedId,
+} from "@/lib/narration-speed";
 
 interface Props {
   playing: boolean;
@@ -46,6 +57,8 @@ interface Props {
   canGenerateKeyframes?: boolean;
   canGenerateNarration?: boolean;
   canGenerateMedia?: boolean;
+  narrationSpeedId?: NarrationSpeedId;
+  onNarrationSpeedChange?: (id: NarrationSpeedId) => void;
 }
 
 function timecode(s: number) {
@@ -83,9 +96,11 @@ export function TimelineToolbar({
   canGenerateKeyframes,
   canGenerateNarration,
   canGenerateMedia,
+  narrationSpeedId = "normal",
+  onNarrationSpeedChange,
 }: Props) {
   return (
-    <div className="flex h-9 items-center gap-1 border-b border-black/30 bg-timeline-bg px-2 text-white">
+    <div className="flex h-9 items-center gap-1 border-b border-timeline-border bg-timeline-bg px-2 text-timeline-foreground">
       <Button
         variant="timeline"
         size="icon-sm"
@@ -111,12 +126,12 @@ export function TimelineToolbar({
         <SkipForward className="h-3 w-3" />
       </Button>
 
-      <div className="mx-1.5 h-4 w-px bg-white/15" />
+      <div className="mx-1.5 h-4 w-px bg-timeline-muted/30" />
 
       <Button variant="timeline" size="icon-sm" onClick={onZoomOut} title="Zoom out">
         <ZoomOut className="h-3 w-3" />
       </Button>
-      <span className="w-10 text-center font-mono text-2xs text-white/60">
+      <span className="w-10 text-center font-mono text-2xs text-timeline-muted">
         {pxPerSecond}px/s
       </span>
       <Button variant="timeline" size="icon-sm" onClick={onZoomIn} title="Zoom in">
@@ -126,9 +141,9 @@ export function TimelineToolbar({
         <Maximize2 className="h-3 w-3" />
       </Button>
 
-      <div className="mx-2 font-mono text-2xs text-white/70">
-        <span className="text-white">{timecode(currentTime)}</span>
-        <span className="text-white/40"> / {timecode(totalTime)}</span>
+      <div className="mx-2 font-mono text-2xs text-timeline-muted">
+        <span className="text-timeline-foreground">{timecode(currentTime)}</span>
+        <span className="text-timeline-muted/70"> / {timecode(totalTime)}</span>
       </div>
 
       <div className="ml-auto flex items-center gap-1">
@@ -157,17 +172,39 @@ export function TimelineToolbar({
           </Button>
         )}
         {onGenerateAllNarration && (
-          <Button
-            variant="timeline"
-            size="sm"
-            onClick={onGenerateAllNarration}
-            disabled={!canGenerateNarration || narrationBusy}
-            className={cn((narrationBusy || !canGenerateNarration) && "opacity-60")}
-            title="Generate narration for all blocks"
-          >
-            <AudioLines className="h-3 w-3" />
-            {narrationBusy ? "Narration…" : "Narration"}
-          </Button>
+          <div className="flex items-center gap-0.5">
+            {onNarrationSpeedChange && (
+              <Select
+                value={narrationSpeedId}
+                onValueChange={(v) => onNarrationSpeedChange(v as NarrationSpeedId)}
+              >
+                <SelectTrigger
+                  className="h-7 w-[5.5rem] border-timeline-border bg-timeline-bg text-[10px] text-timeline-foreground"
+                  title="Narration speed — applies to the next batch generation"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {NARRATION_SPEED_OPTIONS.map((o) => (
+                    <SelectItem key={o.id} value={o.id}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            <Button
+              variant="timeline"
+              size="sm"
+              onClick={onGenerateAllNarration}
+              disabled={!canGenerateNarration || narrationBusy}
+              className={cn((narrationBusy || !canGenerateNarration) && "opacity-60")}
+              title="Generate narration for all blocks (uses speed setting)"
+            >
+              <AudioLines className="h-3 w-3" />
+              {narrationBusy ? "Narration…" : "Narration"}
+            </Button>
+          </div>
         )}
         {onGenerateAllMedia && (
           <Button

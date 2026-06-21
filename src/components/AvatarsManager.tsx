@@ -174,7 +174,7 @@ function CreateAvatarCard({
               className="mt-1 flex w-full items-center justify-center gap-2 rounded-md border border-dashed border-border bg-background px-3 py-4 text-xs text-muted-foreground hover:border-accent/40 hover:bg-muted/60"
             >
               <Upload className="h-3.5 w-3.5" />
-              Click to upload (up to 6 images, 8MB each)
+              Click to upload (up to 6 images, 20MB each)
             </button>
             <input
               ref={fileRef}

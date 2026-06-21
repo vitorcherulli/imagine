@@ -14,6 +14,13 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
   const owned = await getBlockForUser(params.id, userId);
   if (!owned) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+  if (owned.block.status === "video_generating" || owned.block.status === "generating") {
+    return NextResponse.json(
+      { error: "Video generation already in progress for this block." },
+      { status: 409 },
+    );
+  }
+
   await setBlockStatus(params.id, {
     status: "video_generating",
     errorMessage: null,

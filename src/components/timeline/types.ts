@@ -1,4 +1,5 @@
 import type { StoryBlock } from "@/lib/db/schema";
+import { blockRequiresNarrationAudio } from "@/lib/cut-pace";
 
 export type Block = StoryBlock;
 
@@ -50,7 +51,8 @@ export function statusDot(b: Block): { color: string; label: string } {
   if (b.status === "ready") return { color: "bg-success", label: "Ready" };
   if (b.status === "generating" || b.status.endsWith("_generating"))
     return { color: "bg-warning animate-pulse", label: "Generating…" };
-  if (b.videoUrl && b.audioUrl) return { color: "bg-success", label: "Ready" };
+  if (b.videoUrl && (!blockRequiresNarrationAudio(b) || b.audioUrl))
+    return { color: "bg-success", label: "Ready" };
   if (b.keyframeUrl) return { color: "bg-accent", label: "Keyframe ready" };
   return { color: "bg-muted-foreground/40", label: "Draft" };
 }

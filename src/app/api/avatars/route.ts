@@ -8,7 +8,7 @@ import { saveAvatarBuffer } from "@/lib/storage";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const MAX_FILE_BYTES = 8 * 1024 * 1024;
+const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const ALLOWED_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
 
 export async function GET() {
@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
   }
   for (const f of files) {
     if (f.size > MAX_FILE_BYTES) {
-      return NextResponse.json({ error: `${f.name} is larger than 8MB` }, { status: 400 });
+      return NextResponse.json({ error: `${f.name} is larger than 20MB` }, { status: 400 });
     }
     if (!ALLOWED_TYPES.includes(f.type)) {
       return NextResponse.json(

@@ -9,13 +9,21 @@ import {
   buildStoryUserPrompt,
   type BlockDraft,
 } from "@/lib/story-prompts";
-import { matchAvatarByName } from "@/lib/avatar-block";
+import { assignBlockAvatarFromStory, resolveProjectAvatar } from "@/lib/avatar-block";
+import { resolveProjectCast } from "@/lib/project-avatars";
 import { resolveProjectApiModels } from "@/lib/project-api-models";
+import { resolveProjectIdentityForProject } from "@/lib/project-dna-server";
 import {
   generateAndSaveAnchor,
   generateAndSaveStyleBible,
   normalizeLocationTag,
 } from "@/lib/style-bible-server";
+import {
+  clampContinuousCutDuration,
+  clampVisualDuration,
+  isVisualCutOnly,
+  normalizeNarrationMode,
+} from "@/lib/cut-pace";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -37,34 +45,71 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
       .select()
       .from(schema.avatars)
       .where(eq(schema.avatars.userId, userId));
-    const hasCharacters = userAvatars.length > 0;
+    const cast = resolveProjectCast(project, userAvatars);
+    const storyCharacters = cast.length > 0 ? cast : userAvatars;
+    const projectAvatar =
+      cast.length === 1
+        ? cast[0]
+        : cast.length > 1
+          ? cast.find((a) => a.id === project.avatarId) ?? null
+          : resolveProjectAvatar(project, userAvatars);
+    const hasCharacters = storyCharacters.length > 0;
+    const resolvedIdentity = await resolveProjectIdentityForProject(project);
     const raw = await chatCompletion({
       messages: [
-        { role: "system", content: buildStorySystemPrompt(hasCharacters) },
-        { role: "user", content: buildStoryUserPrompt(project, userAvatars) },
+        {
+          role: "system",
+          content: buildStorySystemPrompt(
+            project,
+            hasCharacters,
+            cast.length <= 1 ? projectAvatar?.name ?? null : null,
+          ),
+        },
+        {
+          role: "user",
+          content: buildStoryUserPrompt(
+            project,
+            storyCharacters.map((c) => ({ name: c.name, description: c.description })),
+            cast.length <= 1 ? projectAvatar : null,
+            resolvedIdentity || undefined,
+          ),
+        },
       ],
       model: models.llmModel,
       temperature: 0.85,
       response_format: { type: "json_object" },
     });
     const json = extractJson<{ blocks: BlockDraft[] }>(raw);
-    const blocks = (json.blocks ?? []).slice(0, 30);
+    const blocks = (json.blocks ?? []).slice(0, 45);
     if (blocks.length === 0) {
       return NextResponse.json({ error: "LLM returned no blocks" }, { status: 502 });
     }
+
+    const continuous = normalizeNarrationMode(project.narrationMode) === "continuous";
 
     await db.delete(schema.storyBlocks).where(eq(schema.storyBlocks.projectId, project.id));
 
     const now = new Date();
     const rows = blocks.map((b, i) => {
-      const characterName = b.characterName?.trim() || null;
-      const matched = matchAvatarByName(characterName, userAvatars);
-      let avatarId: string | null = null;
-      if (characterName && matched) {
-        avatarId = matched.id;
-      } else if (!characterName && userAvatars.length === 1) {
-        avatarId = userAvatars[0].id;
-      }
+      const draft: BlockDraft = {
+        ...b,
+        narrationGroupId: b.narrationGroupId?.trim() || null,
+        narrativeText: b.narrativeText ?? "",
+      };
+      const visualOnly =
+        continuous &&
+        isVisualCutOnly({
+          narrationGroupId: draft.narrationGroupId ?? null,
+          narrativeText: draft.narrativeText,
+        });
+      const durationSeconds = visualOnly
+        ? clampContinuousCutDuration(b.durationSeconds ?? 4, project.cutPace)
+        : clampVisualDuration(b.durationSeconds ?? 8, project.cutPace);
+      const { avatarId, characterName } = assignBlockAvatarFromStory(
+        b.characterName,
+        projectAvatar,
+        cast.length > 0 ? cast : userAvatars,
+      );
       return {
         id: createId(),
         projectId: project.id,
@@ -72,10 +117,11 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
         segmentType: ["intro", "development", "climax", "resolution"].includes(b.segmentType)
           ? b.segmentType
           : "development",
-        narrativeText: b.narrativeText ?? "",
+        narrativeText: draft.narrativeText,
         visualPrompt: b.visualPrompt ?? "",
         locationTag: normalizeLocationTag(b.locationTag),
-        durationSeconds: Math.min(12, Math.max(4, Math.round(b.durationSeconds ?? 8))),
+        durationSeconds,
+        narrationGroupId: draft.narrationGroupId,
         avatarId,
         characterName,
         status: "draft",
