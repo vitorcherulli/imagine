@@ -4,10 +4,9 @@
 # Defina as variáveis sensíveis no Portainer (Environment variables)
 # ou copie docker/.env.portainer.example → docker/.env.portainer (local, gitignored).
 #
-# Ao subir, o serviço migrator:
-#   1) espera o Postgres (postgres:5432)
-#   2) cria todas as tabelas via Drizzle (drizzle/pg)
-#   3) encerra — o web sobe em seguida
+# Ao subir, o serviço migrator (e o web na nova imagem) aplicam drizzle/pg + hotfixes.
+# Se faltar coluna no Postgres: docker/pg-hotfix.sql ou force o migrator:
+#   docker service update --force <stack>_migrator
 #
 # Infra já existente no servidor:
 #   - PostgreSQL (hostname: postgres, DB: imagine)

@@ -31,7 +31,8 @@ ENV NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL=$NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL
 ENV NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL=$NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL
 ENV NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN npm run build
+RUN npm run build \
+  && npx esbuild src/lib/db/migrate-pg.ts --bundle --platform=node --packages=external --outfile=migrate-pg.js
 
 FROM node:20-bookworm-slim AS runner
 WORKDIR /app
@@ -50,6 +51,7 @@ COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/drizzle ./drizzle
+COPY --from=builder /app/migrate-pg.js ./migrate-pg.js
 
 RUN mkdir -p /app/data /app/public/generated \
   && chown -R nextjs:nodejs /app/data /app/public/generated
@@ -60,4 +62,4 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/api/health || exit 1
 
-CMD ["node", "server.js"]
+CMD ["sh", "-c", "node migrate-pg.js && exec node server.js"]

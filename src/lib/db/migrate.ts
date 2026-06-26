@@ -9,6 +9,7 @@ import path from "node:path";
 import * as sqliteSchema from "./schema";
 import * as pgSchema from "./schema-pg";
 import { databaseUrl, isPostgresUrl } from "./url";
+import { applyPgSchemaHotfixes } from "./pg-hotfixes";
 
 async function main(): Promise<void> {
   const url = databaseUrl();
@@ -18,6 +19,8 @@ async function main(): Promise<void> {
     const db = drizzlePostgres(client, { schema: pgSchema });
     console.log("Applying migrations to PostgreSQL...");
     await migratePostgres(db, { migrationsFolder: "./drizzle/pg" });
+    console.log("Applying PostgreSQL schema hotfixes...");
+    await applyPgSchemaHotfixes(client);
     await client.end();
     console.log("PostgreSQL migrations applied.");
     return;
