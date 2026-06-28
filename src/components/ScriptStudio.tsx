@@ -884,6 +884,7 @@ export function ScriptStudio({
       setMp3Url(url);
       setMp3Filename(filename);
       const measured = data.measuredDurationSeconds as number | undefined;
+      const spansUsed = data.deliverySpansUsed as number | undefined;
       if (typeof measured === "number" && measured > 0) {
         setMeasuredAudioSeconds(Math.round(measured));
       }
@@ -892,7 +893,7 @@ export function ScriptStudio({
         title: "Narration MP3 ready",
         description: `${((data.bytes as number) / 1024).toFixed(0)} KB${
           measured ? ` · ${Math.round(measured)}s measured` : ""
-        }`,
+        }${spansUsed && spansUsed > 0 ? ` · ${spansUsed} delivery emphasis` : ""}`,
       });
       const link = document.createElement("a");
       link.href = url;
@@ -1464,7 +1465,8 @@ export function ScriptStudio({
           >
             <p className="text-2xs text-muted-foreground">
               Marks short phrases for intonation, emotion and weight — underlines in the document.
-              Use AI for precise picks; before analyzing, auto rules apply.
+              After <strong className="font-medium text-foreground">Analyze delivery</strong>, MP3 and
+              voice preview use these hints in the TTS.
             </p>
             <Button
               size="sm"
@@ -1797,6 +1799,7 @@ export function ScriptStudio({
           >
             <p className="text-2xs text-muted-foreground">
               Apply turns the script into a continuous storyboard (one narration per paragraph + visual cuts).
+              Download MP3 uses delivery emphasis when analyzed.
             </p>
             <Button
               type="button"
