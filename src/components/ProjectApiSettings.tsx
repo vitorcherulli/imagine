@@ -18,12 +18,15 @@ import {
   VIDEO_MODEL_OPTIONS,
   getDefaultTtsVoiceForModel,
   isGeminiTtsModel,
+  isGrokTtsModel,
+  isElevenLabsTtsModel,
   videoLabelForModel,
   videoOpenRouterBillingForModel,
   voiceLabelForModel,
   voiceOptionsForTtsModel,
   type ProjectApiModels,
 } from "@/lib/project-api-models";
+import { FavoriteVoiceSelect } from "@/components/FavoriteVoiceSelect";
 
 const API_SETTINGS_COLLAPSED_KEY = "imagine-api-settings-collapsed";
 
@@ -160,25 +163,37 @@ export function ProjectApiSettings({ value, onChange, variant = "inline" }: Prop
         </Select>
       </Field>
       <Field label="Voice" className="col-span-2">
-        <Select value={value.ttsVoice} onValueChange={(v) => onChange({ ttsVoice: v })}>
-          <SelectTrigger className={selectClass}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent className="max-h-64">
-            {voiceOptions.map((o) => (
-              <SelectItem key={o.value} value={o.value}>
-                {o.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <FavoriteVoiceSelect
+          ttsModel={value.ttsModel}
+          value={value.ttsVoice}
+          onValueChange={(v) => onChange({ ttsVoice: v })}
+          options={voiceOptions}
+          triggerClassName={selectClass}
+          showFavoriteChips={!collapsed}
+        />
         {!collapsed && isGeminiTtsModel(value.ttsModel) && (
           <p className="mt-1 text-2xs text-amber-600/90 dark:text-amber-400/90">
             Gemini may block some scripts (Google safety filter). If generation fails, the app
             auto-switches to Kokoro — or select Kokoro directly for fewer errors.
           </p>
         )}
-        {!collapsed && !isGeminiTtsModel(value.ttsModel) && (
+        {!collapsed && isGrokTtsModel(value.ttsModel) && (
+          <p className="mt-1 text-2xs text-muted-foreground">
+            Natural prosody, 20+ languages, speech tags like [pause] and [laugh]. ~$15/M chars on
+            OpenRouter.
+          </p>
+        )}
+        {!collapsed && isElevenLabsTtsModel(value.ttsModel) && (
+          <p className="mt-1 text-2xs text-muted-foreground">
+            Premium voices via your ElevenLabs account. Set{" "}
+            <span className="font-mono">ELEVENLABS_API_KEY</span> in .env.local. Supports Portuguese
+            (multilingual v2).
+          </p>
+        )}
+        {!collapsed &&
+          !isGeminiTtsModel(value.ttsModel) &&
+          !isGrokTtsModel(value.ttsModel) &&
+          !isElevenLabsTtsModel(value.ttsModel) && (
           <p className="mt-1 text-2xs text-muted-foreground">
             Reliable narration for story blocks. Voice follows tone when set to Auto.
           </p>
@@ -249,7 +264,11 @@ export function apiModelsSummary(models: ProjectApiModels): string {
   const llm = LLM_MODEL_OPTIONS.find((o) => o.value === models.llmModel)?.label ?? "Custom LLM";
   const video = videoLabelForModel(models.videoModel);
   const tts = TTS_MODEL_OPTIONS.find((o) => o.value === models.ttsModel)?.label ?? "Custom TTS";
-  if (isGeminiTtsModel(models.ttsModel)) {
+  if (
+    isGeminiTtsModel(models.ttsModel) ||
+    isGrokTtsModel(models.ttsModel) ||
+    isElevenLabsTtsModel(models.ttsModel)
+  ) {
     const voice = voiceLabelForModel(models.ttsModel, models.ttsVoice);
     return `${llm} · ${video} · ${tts} · ${voice}`;
   }

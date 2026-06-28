@@ -3,10 +3,25 @@ import { adjustSpeechSpeed } from "../ffmpeg";
 import { normalizeTtsSpeed } from "../narration-speed";
 import {
   DEFAULT_GEMINI_TTS_VOICE,
+  DEFAULT_GROK_TTS_VOICE,
+  DEFAULT_ELEVENLABS_VOICE,
+  isElevenLabsTtsModel,
   isGeminiTtsModel,
+  isGrokTtsModel,
 } from "../project-api-models";
+import {
+  elevenLabsModelIdFromSlug,
+  generateElevenLabsSpeech,
+} from "../elevenlabs/tts";
+import type { ScriptDeliverySpan } from "../script-studio";
+import {
+  buildTtsDeliveryNotes,
+  formatGeminiDeliverySpanBlock,
+  prepareSpeechTextForTts,
+} from "../script-tts-delivery";
 
 export const KOKORO_TTS_MODEL = "hexgrad/kokoro-82m";
+export const GROK_TTS_MODEL = "x-ai/grok-voice-tts-1.0";
 
 export interface TtsInput {
   text: string;
@@ -16,6 +31,18 @@ export interface TtsInput {
   speed?: number;
   /** Used when Gemini is blocked and we fall back to Kokoro. */
   voiceTone?: string;
+  /** Director pacing hint from Script Studio narrator suggestion. */
+  deliveryNotes?: string;
+  /** AI delivery spans from Analyze delivery — applied per speech segment. */
+  deliverySpans?: ScriptDeliverySpan[];
+}
+
+function deliverySpeedBias(notes?: string): number {
+  if (!notes?.trim()) return 0;
+  const lower = notes.toLowerCase();
+  if (/\b(slow|unhurried|gentle|calm|lingering|soft|breath)\b/.test(lower)) return -0.08;
+  if (/\b(fast|quick|energetic|urgent|brisk|punchy)\b/.test(lower)) return 0.08;
+  return 0;
 }
 
 export interface SpeechResult {
@@ -56,11 +83,23 @@ function pcmToWav(
 }
 
 /** Google recommends a clear preamble so the TTS classifier does not false-reject. */
-function formatGeminiTtsInput(text: string): string {
+function formatGeminiTtsInput(
+  text: string,
+  deliveryNotes?: string,
+  deliverySpans?: ScriptDeliverySpan[],
+): string {
   const transcript = text.trim();
+  const delivery = deliveryNotes?.trim();
+  const spanBlock = formatGeminiDeliverySpanBlock(deliverySpans ?? []);
+  const deliveryLine = delivery
+    ? `Overall delivery (do not read aloud): ${delivery}\n\n`
+    : "";
   return (
     "Read the following story narration aloud in a warm, natural storyteller voice. " +
-    "Speak only the transcript text below. Do not read labels, instructions, or metadata.\n\n" +
+    "Speak only the transcript text below. Do not read labels, instructions, or metadata. " +
+    "Follow the performance emphasis notes for intonation and pacing on specific phrases.\n\n" +
+    spanBlock +
+    deliveryLine +
     `Transcript:\n${transcript}`
   );
 }
@@ -118,9 +157,21 @@ async function requestSpeechOnce(input: {
   model: string;
   format: "mp3" | "pcm";
   speed?: number;
+  deliveryNotes?: string;
+  deliverySpans?: ScriptDeliverySpan[];
 }): Promise<{ buffer: Buffer; filename: string }> {
   const gemini = isGeminiTtsModel(input.model);
-  const ttsText = gemini ? formatGeminiTtsInput(input.text) : input.text;
+  const spokenText = prepareSpeechTextForTts({
+    text: input.text,
+    deliverySpans: input.deliverySpans,
+    ttsModel: input.model,
+    isGemini: gemini,
+    isElevenLabs: false,
+  });
+  const ttsText = gemini
+    ? formatGeminiTtsInput(spokenText, input.deliveryNotes, input.deliverySpans)
+    : spokenText;
+  const format = input.format ?? (gemini ? "pcm" : "mp3");
 
   const res = await openRouterFetch("/audio/speech", {
     method: "POST",
@@ -128,7 +179,7 @@ async function requestSpeechOnce(input: {
       model: input.model,
       input: ttsText,
       voice: input.voice,
-      response_format: input.format,
+      response_format: format,
       ...(input.speed ? { speed: input.speed } : {}),
     },
   });
@@ -167,7 +218,7 @@ async function requestSpeechOnce(input: {
     }
   }
 
-  if (gemini || input.format === "pcm") {
+  if (gemini || format === "pcm") {
     return { buffer: pcmToWav(buffer), filename: "audio.wav" };
   }
   return { buffer, filename: "audio.mp3" };
@@ -176,30 +227,72 @@ async function requestSpeechOnce(input: {
 export async function generateSpeech(input: TtsInput): Promise<SpeechResult> {
   const primaryModel = input.model ?? OPENROUTER_MODELS.tts;
   const gemini = isGeminiTtsModel(primaryModel);
+  const grok = isGrokTtsModel(primaryModel);
+  const elevenlabs = isElevenLabsTtsModel(primaryModel);
   const voice =
-    input.voice ?? (gemini ? DEFAULT_GEMINI_TTS_VOICE : pickVoiceForTone(input.voiceTone ?? ""));
+    input.voice ??
+    (gemini
+      ? DEFAULT_GEMINI_TTS_VOICE
+      : grok
+        ? pickGrokVoiceForTone(input.voiceTone ?? "")
+        : elevenlabs
+          ? pickElevenLabsVoiceForTone(input.voiceTone ?? "")
+          : pickVoiceForTone(input.voiceTone ?? ""));
   const format = input.format ?? (gemini ? "pcm" : "mp3");
-  const speed = normalizeTtsSpeed(input.speed ?? 1);
-  console.info(`[tts] model=${primaryModel} voice=${voice} format=${format} speed=${speed}`);
+  const speed = normalizeTtsSpeed(
+    (input.speed ?? 1) + deliverySpeedBias(input.deliveryNotes),
+  );
+  const deliveryNotes = buildTtsDeliveryNotes(
+    input.deliveryNotes,
+    input.deliverySpans ?? [],
+  );
+  const spokenText = prepareSpeechTextForTts({
+    text: input.text,
+    deliverySpans: input.deliverySpans,
+    ttsModel: primaryModel,
+    isGemini: gemini,
+    isElevenLabs: elevenlabs,
+  });
+  console.info(
+    `[tts] model=${primaryModel} voice=${voice} format=${format} speed=${speed} deliverySpans=${input.deliverySpans?.length ?? 0}`,
+  );
 
   async function finish(result: { buffer: Buffer; filename: string }, modelUsed: string, usedFallback?: boolean) {
     const adjusted = await adjustSpeechSpeed(result.buffer, result.filename, speed);
     return { ...adjusted, modelUsed, usedFallback };
   }
 
-  try {
-    const result = await requestSpeechOnce({
+  async function synthesize(): Promise<{ buffer: Buffer; filename: string }> {
+    if (elevenlabs) {
+      return generateElevenLabsSpeech({
+        text: spokenText,
+        voiceId: voice,
+        modelId: elevenLabsModelIdFromSlug(primaryModel),
+        speed,
+        useSsml: Boolean(input.deliverySpans?.length),
+      });
+    }
+    return requestSpeechOnce({
       text: input.text,
       voice,
       model: primaryModel,
       format,
       speed: speed !== 1 ? speed : undefined,
+      deliveryNotes,
+      deliverySpans: input.deliverySpans,
     });
+  }
+
+  try {
+    const result = await synthesize();
     return finish(result, primaryModel);
   } catch (err) {
     const raw = err instanceof Error ? err.message : String(err);
     const canFallback =
-      isGeminiTtsModel(primaryModel) && primaryModel !== KOKORO_TTS_MODEL;
+      (isGeminiTtsModel(primaryModel) ||
+        isGrokTtsModel(primaryModel) ||
+        isElevenLabsTtsModel(primaryModel)) &&
+      primaryModel !== KOKORO_TTS_MODEL;
 
     if (canFallback) {
       try {
@@ -210,6 +303,8 @@ export async function generateSpeech(input: TtsInput): Promise<SpeechResult> {
           model: KOKORO_TTS_MODEL,
           format: "mp3",
           speed: input.speed,
+          deliveryNotes,
+          deliverySpans: input.deliverySpans,
         });
         console.warn(
           `[tts] Gemini blocked/failed — used Kokoro fallback. Original: ${raw.slice(0, 160)}`,
@@ -252,6 +347,26 @@ export function pickGeminiVoiceForTone(tone: string): string {
   return "Kore";
 }
 
+export function pickGrokVoiceForTone(tone: string): string {
+  const t = tone.toLowerCase();
+  if (t.includes("dramatic") || t.includes("suspense") || t.includes("dark")) return "rex";
+  if (t.includes("calm") || t.includes("soft")) return "sal";
+  if (t.includes("energ") || t.includes("excit") || t.includes("playful")) return "eve";
+  if (t.includes("warm") || t.includes("kind")) return "ara";
+  if (t.includes("narr") || t.includes("document")) return "leo";
+  return DEFAULT_GROK_TTS_VOICE;
+}
+
+export function pickElevenLabsVoiceForTone(tone: string): string {
+  const t = tone.toLowerCase();
+  if (t.includes("dramatic") || t.includes("suspense") || t.includes("dark")) return "pNInz6obpgDQGcFmaJgB";
+  if (t.includes("calm") || t.includes("soft")) return "EXAVITQu4vr4xnSDxMaL";
+  if (t.includes("energ") || t.includes("excit")) return "MF3mGyEYCl7XYWbV9V6O";
+  if (t.includes("warm") || t.includes("kind")) return "XrExE9yKIg1WjnnlVkGX";
+  if (t.includes("narr") || t.includes("document")) return "XB0fDUnXU5powFXDhCwa";
+  return DEFAULT_ELEVENLABS_VOICE;
+}
+
 export function resolveTtsVoice(input: {
   ttsModel: string;
   ttsVoice: string;
@@ -259,6 +374,16 @@ export function resolveTtsVoice(input: {
 }): string {
   if (isGeminiTtsModel(input.ttsModel)) {
     return input.ttsVoice || DEFAULT_GEMINI_TTS_VOICE;
+  }
+  if (isGrokTtsModel(input.ttsModel)) {
+    if (input.ttsVoice && input.ttsVoice !== "auto") {
+      return input.ttsVoice.toLowerCase();
+    }
+    return pickGrokVoiceForTone(input.voiceTone);
+  }
+  if (isElevenLabsTtsModel(input.ttsModel)) {
+    if (input.ttsVoice && input.ttsVoice !== "auto") return input.ttsVoice;
+    return pickElevenLabsVoiceForTone(input.voiceTone);
   }
   if (input.ttsVoice && input.ttsVoice !== "auto") {
     return input.ttsVoice;

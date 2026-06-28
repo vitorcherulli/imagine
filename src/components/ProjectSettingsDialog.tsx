@@ -31,47 +31,23 @@ import type { Project, ProjectDna } from "@/lib/db/schema";
 import { projectDnaSummary } from "@/lib/project-dna";
 import { cn } from "@/lib/utils";
 
-const STORAGE_PREFIX = "imagine-project-settings:section";
-
-function readCollapsed(key: string, fallback: boolean) {
-  if (typeof window === "undefined") return fallback;
-  try {
-    const raw = window.localStorage.getItem(`${STORAGE_PREFIX}:${key}`);
-    if (raw === "0") return false;
-    if (raw === "1") return true;
-  } catch {}
-  return fallback;
-}
-
-function writeCollapsed(key: string, collapsed: boolean) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(`${STORAGE_PREFIX}:${key}`, collapsed ? "1" : "0");
-  } catch {}
-}
-
 interface SectionProps {
-  id: string;
   icon: React.ReactNode;
   title: string;
   summary?: string;
-  defaultCollapsed?: boolean;
+  resetEpoch: number;
   children: React.ReactNode;
 }
 
-function Section({ id, icon, title, summary, defaultCollapsed = true, children }: SectionProps) {
-  const [collapsed, setCollapsed] = React.useState(defaultCollapsed);
+function Section({ icon, title, summary, resetEpoch, children }: SectionProps) {
+  const [collapsed, setCollapsed] = React.useState(true);
 
   React.useEffect(() => {
-    setCollapsed(readCollapsed(id, defaultCollapsed));
-  }, [id, defaultCollapsed]);
+    setCollapsed(true);
+  }, [resetEpoch]);
 
   function toggle() {
-    setCollapsed((prev) => {
-      const next = !prev;
-      writeCollapsed(id, next);
-      return next;
-    });
+    setCollapsed((prev) => !prev);
   }
 
   return (
@@ -79,17 +55,21 @@ function Section({ id, icon, title, summary, defaultCollapsed = true, children }
       <button
         type="button"
         onClick={toggle}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted/40"
+        className="flex w-full items-start gap-2.5 px-3 py-2.5 text-left hover:bg-muted/40"
         aria-expanded={!collapsed}
       >
-        <span className="text-muted-foreground">{icon}</span>
-        <span className="flex-1 text-xs font-medium">{title}</span>
-        {summary && (
-          <span className="max-w-[55%] truncate text-2xs text-muted-foreground">{summary}</span>
-        )}
+        <span className="mt-0.5 shrink-0 text-muted-foreground">{icon}</span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-xs font-medium leading-snug">{title}</span>
+          {summary && collapsed && (
+            <span className="mt-0.5 block truncate text-2xs leading-snug text-muted-foreground">
+              {summary}
+            </span>
+          )}
+        </span>
         <ChevronDown
           className={cn(
-            "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
+            "mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
             !collapsed && "rotate-180",
           )}
         />
@@ -130,6 +110,12 @@ export function ProjectSettingsDialog({
   onBriefChange,
   onBriefSave,
 }: Props) {
+  const [resetEpoch, setResetEpoch] = React.useState(0);
+
+  React.useEffect(() => {
+    if (open) setResetEpoch((n) => n + 1);
+  }, [open]);
+
   const formatSpec = getVideoFormatSpec(project.videoFormat);
   const cutPace = normalizeCutPace(project.cutPace);
   const narrationMode = normalizeNarrationMode(project.narrationMode);
@@ -159,7 +145,7 @@ export function ProjectSettingsDialog({
 
         <div className="space-y-2 pt-1">
           <Section
-            id="format"
+            resetEpoch={resetEpoch}
             icon={<MonitorSmartphone className="h-3.5 w-3.5" />}
             title="Video format"
             summary={formatSpec.shortLabel}
@@ -174,7 +160,7 @@ export function ProjectSettingsDialog({
           </Section>
 
           <Section
-            id="captions"
+            resetEpoch={resetEpoch}
             icon={<Captions className="h-3.5 w-3.5" />}
             title="On-screen captions"
             summary={captionLabel}
@@ -183,7 +169,7 @@ export function ProjectSettingsDialog({
           </Section>
 
           <Section
-            id="pace"
+            resetEpoch={resetEpoch}
             icon={<Clapperboard className="h-3.5 w-3.5" />}
             title="Cut pace & narration"
             summary={`${cutPaceLabel} · ${narrationLabel}`}
@@ -208,7 +194,7 @@ export function ProjectSettingsDialog({
           </Section>
 
           <Section
-            id="brief"
+            resetEpoch={resetEpoch}
             icon={<FileText className="h-3.5 w-3.5" />}
             title="DNA & synopsis"
             summary={briefSummary}

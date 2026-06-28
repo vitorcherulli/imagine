@@ -45,9 +45,36 @@ export const projects = pgTable("projects", {
   masterVolume: integer("master_volume").notNull().default(100),
   captionMode: text("caption_mode").notNull().default("off"),
   folderId: text("folder_id"),
+  scriptDraft: text("script_draft"),
+  scriptDraftNotes: text("script_draft_notes"),
+  scriptDraftStatus: text("script_draft_status").notNull().default("none"),
+  scriptDraftVersion: integer("script_draft_version"),
   createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
 });
+
+export const scriptVersions = pgTable(
+  "script_versions",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    script: text("script").notNull(),
+    notes: text("notes"),
+    source: text("source").notNull(),
+    summary: text("summary"),
+    wordCount: integer("word_count").notNull().default(0),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  },
+  (table) => ({
+    projectVersionUnique: uniqueIndex("script_versions_project_version").on(
+      table.projectId,
+      table.version,
+    ),
+  }),
+);
 
 export const projectFolders = pgTable("project_folders", {
   id: text("id").primaryKey(),
@@ -148,6 +175,8 @@ export type ProjectFolder = typeof projectFolders.$inferSelect;
 export type NewProjectFolder = typeof projectFolders.$inferInsert;
 export type Project = typeof projects.$inferSelect;
 export type NewProject = typeof projects.$inferInsert;
+export type ScriptVersion = typeof scriptVersions.$inferSelect;
+export type NewScriptVersion = typeof scriptVersions.$inferInsert;
 export type StoryBlock = typeof storyBlocks.$inferSelect;
 export type NewStoryBlock = typeof storyBlocks.$inferInsert;
 export type YoutubeMetadata = typeof youtubeMetadata.$inferSelect;

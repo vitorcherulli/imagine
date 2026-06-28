@@ -10,6 +10,7 @@ import * as sqliteSchema from "./schema";
 import * as pgSchema from "./schema-pg";
 import { databaseUrl, isPostgresUrl } from "./url";
 import { applyPgSchemaHotfixes } from "./pg-hotfixes";
+import { applySqliteSchemaHotfixes } from "./sqlite-hotfixes";
 
 async function main(): Promise<void> {
   const url = databaseUrl();
@@ -32,7 +33,15 @@ async function main(): Promise<void> {
   const sqlite = new Database(url);
   const db = drizzleSqlite(sqlite, { schema: sqliteSchema });
   console.log(`Applying migrations to SQLite ${url}...`);
-  migrateSqlite(db, { migrationsFolder: "./drizzle" });
+  try {
+    migrateSqlite(db, { migrationsFolder: "./drizzle" });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (!message.includes("duplicate column")) throw err;
+    console.warn("Migration skipped duplicate column — applying hotfixes instead.");
+  }
+  console.log("Applying SQLite schema hotfixes...");
+  applySqliteSchemaHotfixes(sqlite);
   sqlite.close();
   console.log("SQLite migrations applied.");
 }

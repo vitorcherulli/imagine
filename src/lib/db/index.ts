@@ -7,6 +7,7 @@ import fs from "node:fs";
 import * as sqliteSchema from "./schema";
 import * as pgSchema from "./schema-pg";
 import { databaseUrl, isPostgresUrl } from "./url";
+import { applySqliteSchemaHotfixes } from "./sqlite-hotfixes";
 
 const url = databaseUrl();
 const usePostgres = isPostgresUrl(url);
@@ -25,6 +26,7 @@ function createDb() {
   const sqlite = new Database(url);
   sqlite.pragma("journal_mode = WAL");
   sqlite.pragma("foreign_keys = ON");
+  applySqliteSchemaHotfixes(sqlite);
   return drizzleSqlite(sqlite, { schema: sqliteSchema });
 }
 

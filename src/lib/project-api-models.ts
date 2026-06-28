@@ -39,9 +39,15 @@ export const VIDEO_MODEL_OPTIONS: ApiModelOption[] = [
 ];
 
 export const TTS_MODEL_OPTIONS: ApiModelOption[] = [
-  { value: "hexgrad/kokoro-82m", label: "Kokoro 82M (recommended)" },
+  { value: "hexgrad/kokoro-82m", label: "Kokoro 82M (reliable)" },
+  { value: "x-ai/grok-voice-tts-1.0", label: "Grok Voice TTS (expressive)" },
   { value: "google/gemini-3.1-flash-tts-preview", label: "Gemini 3.1 Flash TTS" },
+  { value: "elevenlabs/eleven_multilingual_v2", label: "ElevenLabs Multilingual v2" },
+  { value: "elevenlabs/eleven_flash_v2_5", label: "ElevenLabs Flash v2.5 (fast)" },
 ];
+
+export const GROK_TTS_MODEL = "x-ai/grok-voice-tts-1.0";
+export const ELEVENLABS_MULTILINGUAL_MODEL = "elevenlabs/eleven_multilingual_v2";
 
 const VIDEO_MODEL_VALUES = new Set(VIDEO_MODEL_OPTIONS.map((o) => o.value));
 
@@ -114,19 +120,63 @@ export const GEMINI_VOICE_OPTIONS: VoiceOption[] = [
   { value: "Zubenelgenubi", label: "Zubenelgenubi — Casual" },
 ];
 
+/** Built-in voices for xAI Grok Voice TTS 1.0 (OpenRouter). */
+export const GROK_VOICE_OPTIONS: VoiceOption[] = [
+  { value: "eve", label: "Eve — Energetic (F)" },
+  { value: "ara", label: "Ara — Warm (F)" },
+  { value: "rex", label: "Rex — Confident (M)" },
+  { value: "sal", label: "Sal — Balanced" },
+  { value: "leo", label: "Leo — Authoritative (M)" },
+];
+
+/** ElevenLabs voices (premade + account custom). */
+export const ELEVENLABS_VOICE_OPTIONS: VoiceOption[] = [
+  { value: "Uo9SxBmutmSnfiiXtEVq", label: "Edi Shankar Kowalewski — Custom" },
+  { value: "21m00Tcm4TlvDq8ikWAM", label: "Rachel — Calm narrator (F)" },
+  { value: "EXAVITQu4vr4xnSDxMaL", label: "Bella — Soft (F)" },
+  { value: "MF3mGyEYCl7XYWbV9V6O", label: "Elli — Energetic (F)" },
+  { value: "XB0fDUnXU5powFXDhCwa", label: "Charlotte — Documentary (F)" },
+  { value: "XrExE9yKIg1WjnnlVkGX", label: "Matilda — Warm (F)" },
+  { value: "pNInz6obpgDQGcFmaJgB", label: "Adam — Deep narrator (M)" },
+  { value: "TxGEqnHWrfWFTfGW9XjX", label: "Josh — Storyteller (M)" },
+  { value: "ErXwobaYiN019PkySvjV", label: "Antoni — Warm (M)" },
+  { value: "onwK4e9ZLuTAKqWW03F9", label: "Daniel — British (M)" },
+  { value: "IKne3meq5aSn9XLyUdCD", label: "Charlie — Casual (M)" },
+];
+
 export const DEFAULT_GEMINI_TTS_VOICE = "Kore";
+export const DEFAULT_GROK_TTS_VOICE = "ara";
+export const DEFAULT_ELEVENLABS_VOICE = "Uo9SxBmutmSnfiiXtEVq";
 
 const GEMINI_VOICE_VALUES = new Set(GEMINI_VOICE_OPTIONS.map((o) => o.value));
 const KOKORO_VOICE_VALUES = new Set(KOKORO_VOICE_OPTIONS.map((o) => o.value));
+const GROK_VOICE_VALUES = new Set(GROK_VOICE_OPTIONS.map((o) => o.value));
+const ELEVENLABS_VOICE_VALUES = new Set(ELEVENLABS_VOICE_OPTIONS.map((o) => o.value));
 
 export function getDefaultTtsVoiceForModel(model: string): string {
-  return isGeminiTtsModel(model) ? DEFAULT_GEMINI_TTS_VOICE : "auto";
+  if (isGeminiTtsModel(model)) return DEFAULT_GEMINI_TTS_VOICE;
+  if (isGrokTtsModel(model)) return DEFAULT_GROK_TTS_VOICE;
+  if (isElevenLabsTtsModel(model)) return DEFAULT_ELEVENLABS_VOICE;
+  return "auto";
 }
 
 function normalizeTtsVoice(model: string, voice: string | null | undefined): string {
   if (isGeminiTtsModel(model)) {
     if (!voice || voice === "auto" || voice === "default" || !GEMINI_VOICE_VALUES.has(voice)) {
       return DEFAULT_GEMINI_TTS_VOICE;
+    }
+    return voice;
+  }
+  if (isGrokTtsModel(model)) {
+    const normalized = voice?.toLowerCase();
+    if (!normalized || normalized === "auto" || !GROK_VOICE_VALUES.has(normalized)) {
+      return DEFAULT_GROK_TTS_VOICE;
+    }
+    return normalized;
+  }
+  if (isElevenLabsTtsModel(model)) {
+    if (!voice || voice === "auto" || !ELEVENLABS_VOICE_VALUES.has(voice)) {
+      return DEFAULT_ELEVENLABS_VOICE;
     }
     return voice;
   }
@@ -155,7 +205,7 @@ export function getDefaultApiModels(): ProjectApiModels {
     imageModel: OPENROUTER_MODELS.image,
     videoModel: OPENROUTER_MODELS.video,
     ttsModel,
-    ttsVoice: isGeminiTtsModel(ttsModel) ? DEFAULT_GEMINI_TTS_VOICE : "auto",
+    ttsVoice: getDefaultTtsVoiceForModel(ttsModel),
   };
 }
 
@@ -180,8 +230,19 @@ export function isGeminiTtsModel(model: string): boolean {
   return model.includes("gemini") && model.includes("tts");
 }
 
+export function isGrokTtsModel(model: string): boolean {
+  return model.includes("grok") && model.includes("voice");
+}
+
+export function isElevenLabsTtsModel(model: string): boolean {
+  return model.startsWith("elevenlabs/");
+}
+
 export function voiceOptionsForTtsModel(model: string): VoiceOption[] {
-  return isGeminiTtsModel(model) ? GEMINI_VOICE_OPTIONS : KOKORO_VOICE_OPTIONS;
+  if (isGeminiTtsModel(model)) return GEMINI_VOICE_OPTIONS;
+  if (isGrokTtsModel(model)) return GROK_VOICE_OPTIONS;
+  if (isElevenLabsTtsModel(model)) return ELEVENLABS_VOICE_OPTIONS;
+  return KOKORO_VOICE_OPTIONS;
 }
 
 export const projectApiModelsSchema = z.object({

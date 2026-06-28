@@ -382,6 +382,30 @@ export async function getMediaDurationSeconds(filePath: string): Promise<number>
   }
 }
 
+/** Measure duration of an in-memory audio clip (requires ffprobe). */
+export async function probeAudioBufferDurationSeconds(
+  input: { buffer: Buffer; filename: string },
+): Promise<number | null> {
+  if (!hasFfmpeg() || input.buffer.length === 0) return null;
+  const ext = path.extname(input.filename).toLowerCase() || ".mp3";
+  const tmpDir = path.join(
+    os.tmpdir(),
+    "imagine-audio-probe",
+    `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+  );
+  await fs.mkdir(tmpDir, { recursive: true });
+  const inPath = path.join(tmpDir, `probe${ext}`);
+  try {
+    await fs.writeFile(inPath, input.buffer);
+    const seconds = await getMediaDurationSeconds(inPath);
+    return seconds > 0.05 ? seconds : null;
+  } catch {
+    return null;
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 /** Speed up or slow down narration (0.75–1.35). Uses atempo; chains filters beyond 0.5–2.0. */
 export async function adjustSpeechSpeed(
   inputBuffer: Buffer,
@@ -491,6 +515,156 @@ export function videoHasAudioStream(filePath: string): Promise<boolean> {
     proc.on("error", () => resolve(false));
     proc.on("close", () => resolve(out.trim().length > 0));
   });
+}
+
+/**
+ * Concatenate audio clips and silence gaps into one MP3. Requires ffmpeg.
+ */
+export type AudioConcatPiece =
+  | { kind: "clip"; buffer: Buffer; filename: string }
+  | { kind: "silence"; seconds: number };
+
+export async function concatAudioPiecesToMp3(
+  pieces: AudioConcatPiece[],
+  opts: { bitrateKbps?: number } = {},
+): Promise<Buffer> {
+  if (!hasFfmpeg()) {
+    throw new Error("ffmpeg is required to concatenate audio");
+  }
+  if (pieces.length === 0) throw new Error("No audio parts to concatenate");
+
+  const tmpDir = path.join(
+    os.tmpdir(),
+    "imagine-script-mp3",
+    `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+  );
+  await fs.mkdir(tmpDir, { recursive: true });
+
+  try {
+    const filePaths: string[] = [];
+    let clipIndex = 0;
+    let silenceIndex = 0;
+
+    for (const piece of pieces) {
+      if (piece.kind === "silence") {
+        const silenceSeconds = Math.max(0, piece.seconds);
+        if (silenceSeconds <= 0) continue;
+        const silencePath = path.join(tmpDir, `silence_${silenceIndex++}.mp3`);
+        await runFfmpeg([
+          "-y",
+          "-f",
+          "lavfi",
+          "-i",
+          "anullsrc=r=44100:cl=stereo",
+          "-t",
+          silenceSeconds.toFixed(2),
+          "-c:a",
+          "libmp3lame",
+          "-b:a",
+          "192k",
+          silencePath,
+        ]);
+        filePaths.push(silencePath);
+        continue;
+      }
+
+      const ext = path.extname(piece.filename).toLowerCase() || ".mp3";
+      const filePath = path.join(tmpDir, `part_${clipIndex++}${ext}`);
+      await fs.writeFile(filePath, piece.buffer);
+      filePaths.push(filePath);
+    }
+
+    if (filePaths.length === 0) throw new Error("No audio parts to concatenate");
+
+    const args: string[] = ["-y"];
+    for (const p of filePaths) args.push("-i", p);
+    const filter =
+      filePaths
+        .map(
+          (_, i) =>
+            `[${i}:a]aresample=44100,aformat=channel_layouts=stereo,asetpts=PTS-STARTPTS[a${i}]`,
+        )
+        .join(";") +
+      ";" +
+      filePaths.map((_, i) => `[a${i}]`).join("") +
+      `concat=n=${filePaths.length}:v=0:a=1[aout]`;
+
+    const outPath = path.join(tmpDir, "out.mp3");
+    args.push(
+      "-filter_complex",
+      filter,
+      "-map",
+      "[aout]",
+      "-c:a",
+      "libmp3lame",
+      "-b:a",
+      `${opts.bitrateKbps ?? 192}k`,
+      outPath,
+    );
+
+    await runFfmpeg(args);
+    return fs.readFile(outPath);
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/**
+ * Concatenate a list of audio buffers into one MP3 file with optional silence
+ * between clips. Returns the encoded MP3 as a Buffer. Requires ffmpeg.
+ */
+export async function concatAudioBuffersToMp3(
+  parts: Array<{ buffer: Buffer; filename: string }>,
+  opts: { silenceBetweenSeconds?: number; bitrateKbps?: number } = {},
+): Promise<Buffer> {
+  if (parts.length === 0) throw new Error("No audio parts to concatenate");
+  const silenceSeconds = Math.max(0, opts.silenceBetweenSeconds ?? 0.35);
+  const pieces: AudioConcatPiece[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i]!;
+    if (i > 0 && silenceSeconds > 0) {
+      pieces.push({ kind: "silence", seconds: silenceSeconds });
+    }
+    pieces.push({ kind: "clip", buffer: part.buffer, filename: part.filename });
+  }
+  return concatAudioPiecesToMp3(pieces, opts);
+}
+
+/** Cap audio length (e.g. narrator preview). Returns original buffer if ffmpeg is unavailable. */
+export async function trimAudioBufferToMaxSeconds(
+  input: { buffer: Buffer; filename: string },
+  maxSeconds: number,
+): Promise<Buffer> {
+  if (!hasFfmpeg() || maxSeconds <= 0) return input.buffer;
+
+  const tmpDir = path.join(
+    os.tmpdir(),
+    "imagine-audio-trim",
+    `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+  );
+  await fs.mkdir(tmpDir, { recursive: true });
+
+  try {
+    const inExt = path.extname(input.filename).toLowerCase() || ".mp3";
+    const inPath = path.join(tmpDir, `in${inExt}`);
+    await fs.writeFile(inPath, input.buffer);
+    const outPath = path.join(tmpDir, "out.mp3");
+    await runFfmpeg([
+      "-y",
+      "-i",
+      inPath,
+      "-t",
+      maxSeconds.toFixed(2),
+      "-c:a",
+      "libmp3lame",
+      "-b:a",
+      "192k",
+      outPath,
+    ]);
+    return fs.readFile(outPath);
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 /** Extract audio track from a video file as a standalone .m4a (AAC). */

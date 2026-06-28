@@ -10,8 +10,15 @@ import { BlockDetailPanel } from "@/components/BlockDetailPanel";
 import { TimelineSplitPane } from "@/components/TimelineSplitPane";
 import { MusicPanel } from "@/components/MusicPanel";
 import { ProjectSettingsDialog } from "@/components/ProjectSettingsDialog";
+import { ScriptStudio } from "@/components/ScriptStudio";
 import { Button } from "@/components/ui/button";
-import { Settings2 } from "lucide-react";
+import { FileText, LayoutPanelTop, Settings2 } from "lucide-react";
+import {
+  normalizeScriptDraftStatus,
+  parseScriptDraftNotes,
+  type ScriptDraftNotes,
+  type ScriptDraftStatus,
+} from "@/lib/script-studio";
 import {
   blockRequiresNarrationAudio,
   normalizeCutPace,
@@ -88,6 +95,23 @@ export function ProjectEditor({
     setCurrentTime(t);
   }
 
+  const [view, setView] = React.useState<"script" | "timeline">(() => {
+    const status = normalizeScriptDraftStatus(initialProject.scriptDraftStatus);
+    if (initialBlocks.length === 0 && (status === "draft" || initialProject.scriptDraft)) {
+      return "script";
+    }
+    if (initialBlocks.length === 0) return "script";
+    return "timeline";
+  });
+  const [scriptDraft, setScriptDraft] = React.useState<string>(
+    initialProject.scriptDraft ?? "",
+  );
+  const [scriptNotes, setScriptNotes] = React.useState<ScriptDraftNotes>(() =>
+    parseScriptDraftNotes(initialProject.scriptDraftNotes),
+  );
+  const [scriptStatus, setScriptStatus] = React.useState<ScriptDraftStatus>(() =>
+    normalizeScriptDraftStatus(initialProject.scriptDraftStatus),
+  );
   const [storyBusy, setStoryBusy] = React.useState(false);
   const [keyframesBusy, setKeyframesBusy] = React.useState(false);
   const [narrationBusy, setNarrationBusy] = React.useState(false);
@@ -728,6 +752,28 @@ export function ProjectEditor({
   const formatSpec = getVideoFormatSpec(project.videoFormat);
   const isVertical = formatSpec.id === "vertical";
 
+  const refreshProjectAndBlocks = React.useCallback(async () => {
+    try {
+      const res = await fetch(`/api/projects/${project.id}`, { cache: "no-store" });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.project) setProject((prev) => patchProjectShallow(prev, data.project));
+      if (Array.isArray(data.blocks)) {
+        setBlocks(data.blocks);
+        setSelectedBlockId(data.blocks[0]?.id ?? null);
+      }
+      setCurrentTime(0);
+      router.refresh();
+    } catch {
+      // ignore
+    }
+  }, [project.id, router]);
+
+  async function onScriptApplied() {
+    await refreshProjectAndBlocks();
+    setView("timeline");
+  }
+
   return (
     <div className="flex h-full flex-1 flex-col overflow-hidden">
       <ProjectHeader
@@ -746,6 +792,64 @@ export function ProjectEditor({
         onStyleBibleUpdated={applyStyleBibleUpdate}
       />
 
+      <div className="flex items-center justify-between gap-3 border-b border-border bg-background px-3 py-1.5">
+        <div className="inline-flex items-center rounded-md border border-border bg-muted/40 p-0.5 text-xs">
+          <button
+            type="button"
+            onClick={() => setView("script")}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-sm px-2.5 py-1 font-medium transition-colors",
+              view === "script"
+                ? "bg-background text-foreground shadow"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <FileText className="h-3.5 w-3.5" /> Script
+            {scriptStatus === "draft" && (
+              <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-accent" />
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => setView("timeline")}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-sm px-2.5 py-1 font-medium transition-colors",
+              view === "timeline"
+                ? "bg-background text-foreground shadow"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <LayoutPanelTop className="h-3.5 w-3.5" /> Timeline
+            {blocks.length > 0 && (
+              <span className="ml-1 rounded-full bg-muted px-1.5 text-2xs">{blocks.length}</span>
+            )}
+          </button>
+        </div>
+        <div className="text-2xs text-muted-foreground">
+          {view === "script"
+            ? "Write or paste the narration. Apply when ready."
+            : "Generate keyframes, narration and video for the storyboard."}
+        </div>
+      </div>
+
+      {view === "script" ? (
+        <div className="flex min-h-0 flex-1">
+          <ScriptStudio
+            project={project}
+            script={scriptDraft}
+            notes={scriptNotes}
+            status={scriptStatus}
+            hasBlocks={blocks.length > 0}
+            onScriptChange={setScriptDraft}
+            onNotesChange={setScriptNotes}
+            onStatusChange={setScriptStatus}
+            onAppliedToTimeline={onScriptApplied}
+            onProjectChanged={(patch) =>
+              setProject((prev) => patchProjectShallow(prev, patch))
+            }
+          />
+        </div>
+      ) : (
       <div className="flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex min-h-0 flex-1 flex-col bg-panel">
@@ -893,6 +997,7 @@ export function ProjectEditor({
           onRemoved={removeBlock}
         />
       </div>
+      )}
 
       {musicPanelOpen && (
         <MusicPanel

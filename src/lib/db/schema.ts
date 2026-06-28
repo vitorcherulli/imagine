@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { DEFAULT_PROJECT_DURATION_SECONDS } from "@/lib/project-durations";
 
 export const projects = sqliteTable("projects", {
@@ -47,6 +47,14 @@ export const projects = sqliteTable("projects", {
   /** off = no on-screen text · bottom | center = narration captions on export/preview */
   captionMode: text("caption_mode").notNull().default("off"),
   folderId: text("folder_id"),
+  /** Script Studio: pre-timeline narration draft (plain text). */
+  scriptDraft: text("script_draft"),
+  /** JSON: { narratorSuggestion, sourceMode, generatedAt, revision } */
+  scriptDraftNotes: text("script_draft_notes"),
+  /** none | draft | applied */
+  scriptDraftStatus: text("script_draft_status").notNull().default("none"),
+  /** Current script version number (script_versions.version). */
+  scriptDraftVersion: integer("script_draft_version"),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .default(sql`(unixepoch())`),
@@ -54,6 +62,31 @@ export const projects = sqliteTable("projects", {
     .notNull()
     .default(sql`(unixepoch())`),
 });
+
+export const scriptVersions = sqliteTable(
+  "script_versions",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    script: text("script").notNull(),
+    notes: text("notes"),
+    source: text("source").notNull(),
+    summary: text("summary"),
+    wordCount: integer("word_count").notNull().default(0),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .notNull()
+      .default(sql`(unixepoch())`),
+  },
+  (table) => ({
+    projectVersionUnique: uniqueIndex("script_versions_project_version").on(
+      table.projectId,
+      table.version,
+    ),
+  }),
+);
 
 export const projectFolders = sqliteTable("project_folders", {
   id: text("id").primaryKey(),
@@ -171,6 +204,8 @@ export type ProjectFolder = typeof projectFolders.$inferSelect;
 export type NewProjectFolder = typeof projectFolders.$inferInsert;
 export type Project = typeof projects.$inferSelect;
 export type NewProject = typeof projects.$inferInsert;
+export type ScriptVersion = typeof scriptVersions.$inferSelect;
+export type NewScriptVersion = typeof scriptVersions.$inferInsert;
 export type StoryBlock = typeof storyBlocks.$inferSelect;
 export type NewStoryBlock = typeof storyBlocks.$inferInsert;
 export type YoutubeMetadata = typeof youtubeMetadata.$inferSelect;
