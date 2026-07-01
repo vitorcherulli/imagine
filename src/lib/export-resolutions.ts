@@ -7,8 +7,9 @@ export interface ExportResolution {
   width: number;
   height: number;
   label: string;
-  /** Constant Rate Factor — lower = better quality, larger files. */
+  /** Base CRF for the YouTube quality preset — adjusted by {@link resolveExportEncoding}. */
   crf: number;
+  /** Base x264 preset for the YouTube quality preset. */
   preset: string;
 }
 

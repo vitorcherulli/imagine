@@ -22,13 +22,17 @@ export const LLM_MODEL_OPTIONS: ApiModelOption[] = [
 ];
 
 export const IMAGE_MODEL_OPTIONS: ApiModelOption[] = [
+  { value: "openai/gpt-5.4-image-2", label: "GPT-5.4 Image (ChatGPT)" },
+  { value: "google/gemini-2.5-flash-image", label: "Gemini 2.5 Flash Image" },
   { value: "bytedance-seed/seedream-4.5", label: "Seedream 4.5" },
-  { value: "black-forest-labs/flux-1.1-pro", label: "Flux 1.1 Pro" },
-  { value: "google/gemini-2.5-flash-image-preview", label: "Gemini Flash Image" },
+  { value: "black-forest-labs/flux.2-pro", label: "Flux 2 Pro" },
 ];
 
 export const VIDEO_MODEL_OPTIONS: ApiModelOption[] = [
+  { value: "google/veo-3.1-lite", label: "Veo 3.1 Lite" },
   { value: "bytedance/seedance-2.0", label: "Seedance 2.0" },
+  { value: "bytedance/seedance-2.0-fast", label: "Seedance 2.0 Fast" },
+  { value: "alibaba/happyhorse-1.1", label: "HappyHorse 1.1" },
   {
     value: "kwaivgi/kling-v3.0-pro",
     label: "Kling v3.0 Pro",
@@ -62,6 +66,42 @@ export function videoLabelForModel(model: string): string {
 
 export function videoOpenRouterBillingForModel(model: string): string | null {
   return VIDEO_MODEL_OPTIONS.find((o) => o.value === model)?.openRouterBilling ?? null;
+}
+
+export function isVeoVideoModel(model: string): boolean {
+  return model.includes("veo");
+}
+
+/** OpenRouter Veo models support native audio via generate_audio. */
+export function veoVideoSupportsNativeAudio(model: string): boolean {
+  return isVeoVideoModel(model);
+}
+
+/** OpenRouter removed preview slugs; remap saved project settings. */
+const LEGACY_IMAGE_MODELS: Record<string, string> = {
+  "google/gemini-2.5-flash-image-preview": "google/gemini-2.5-flash-image",
+  "black-forest-labs/flux-1.1-pro": "black-forest-labs/flux.2-pro",
+};
+
+export function isOpenAiGptImageModel(model: string): boolean {
+  return model.startsWith("openai/") && model.includes("image");
+}
+
+export function isGeminiImageModel(model: string): boolean {
+  return model.startsWith("google/gemini") && model.includes("flash-image");
+}
+
+/** Chat-completions image models that also emit text (OpenRouter: use image+text modalities). */
+export function imageModelUsesTextModality(model: string): boolean {
+  return isOpenAiGptImageModel(model) || isGeminiImageModel(model);
+}
+
+const IMAGE_MODEL_VALUES = new Set(IMAGE_MODEL_OPTIONS.map((o) => o.value));
+
+function normalizeImageModel(model: string | null | undefined, fallback: string): string {
+  if (!model) return fallback;
+  const remapped = LEGACY_IMAGE_MODELS[model] ?? model;
+  return IMAGE_MODEL_VALUES.has(remapped) ? remapped : fallback;
 }
 
 /** OpenRouter removed older Gemini TTS slugs; remap saved project settings. */
@@ -132,6 +172,10 @@ export const GROK_VOICE_OPTIONS: VoiceOption[] = [
 /** ElevenLabs voices (premade + account custom). */
 export const ELEVENLABS_VOICE_OPTIONS: VoiceOption[] = [
   { value: "Uo9SxBmutmSnfiiXtEVq", label: "Edi Shankar Kowalewski — Custom" },
+  { value: "DMyrgzQFny3JI1Y1paM5", label: "Donovan — Articulate, Strong and Deep (M)" },
+  { value: "9R40lyuOorGKzDzlmH64", label: "Arnold — Deep Male Meditation (M)" },
+  { value: "cCYjmrGZaI86GUJ7F2Nn", label: "David — Deep, Warm, Narration (M)" },
+  { value: "Vs5CmVCVJwW4odQS2pVf", label: "Branok — Evil & Villainous (M)" },
   { value: "21m00Tcm4TlvDq8ikWAM", label: "Rachel — Calm narrator (F)" },
   { value: "EXAVITQu4vr4xnSDxMaL", label: "Bella — Soft (F)" },
   { value: "MF3mGyEYCl7XYWbV9V6O", label: "Elli — Energetic (F)" },
@@ -190,10 +234,47 @@ export function voiceLabelForModel(model: string, voice: string): string {
   return options.find((o) => o.value === voice)?.label ?? voice;
 }
 
+/** Compact label for the script header voice button. */
+export function narratorHeaderLabel(ttsModel: string, ttsVoice: string): string {
+  const apiShort =
+    TTS_MODEL_OPTIONS.find((m) => m.value === ttsModel)?.label.split(" ")[0] ?? "Voice";
+  const voiceShort =
+    voiceLabelForModel(ttsModel, ttsVoice).split(" — ")[0]?.split(" (")[0] ?? ttsVoice;
+  if (isElevenLabsTtsModel(ttsModel) || isGrokTtsModel(ttsModel) || isGeminiTtsModel(ttsModel)) {
+    return `${apiShort} · ${voiceShort}`;
+  }
+  return voiceShort === "Auto (from tone)" ? voiceShort : `${voiceShort} · ${apiShort}`;
+}
+
+export type VideoClipAudioMode = "default" | "on" | "off";
+
+export const VIDEO_CLIP_AUDIO_OPTIONS: Array<{ value: VideoClipAudioMode; label: string }> = [
+  { value: "default", label: "Padrão do modelo (Veo: com áudio)" },
+  { value: "on", label: "Com áudio nativo no clip" },
+  { value: "off", label: "Sem áudio no clip (mais barato — Veo, Kling…)" },
+];
+
+export function normalizeVideoClipAudio(value: unknown): VideoClipAudioMode {
+  if (value === "on" || value === "off" || value === "default") return value;
+  return "default";
+}
+
+/** Maps project setting to OpenRouter generate_audio (omit when default). */
+export function resolveVideoGenerateAudio(mode: VideoClipAudioMode): boolean | undefined {
+  if (mode === "on") return true;
+  if (mode === "off") return false;
+  return undefined;
+}
+
+export function videoClipAudioLabel(mode: VideoClipAudioMode): string {
+  return VIDEO_CLIP_AUDIO_OPTIONS.find((o) => o.value === mode)?.label ?? mode;
+}
+
 export type ProjectApiModels = {
   llmModel: string;
   imageModel: string;
   videoModel: string;
+  videoClipAudio: VideoClipAudioMode;
   ttsModel: string;
   ttsVoice: string;
 };
@@ -204,6 +285,7 @@ export function getDefaultApiModels(): ProjectApiModels {
     llmModel: OPENROUTER_MODELS.llm,
     imageModel: OPENROUTER_MODELS.image,
     videoModel: OPENROUTER_MODELS.video,
+    videoClipAudio: "default",
     ttsModel,
     ttsVoice: getDefaultTtsVoiceForModel(ttsModel),
   };
@@ -213,14 +295,16 @@ export function resolveProjectApiModels(
   project: Pick<
     Project,
     "llmModel" | "imageModel" | "videoModel" | "ttsModel" | "ttsVoice"
-  >,
+  > &
+    Partial<Pick<Project, "videoClipAudio">>,
 ): ProjectApiModels {
   const defaults = getDefaultApiModels();
   const ttsModel = normalizeTtsModel(project.ttsModel, defaults.ttsModel);
   return {
     llmModel: project.llmModel ?? defaults.llmModel,
-    imageModel: project.imageModel ?? defaults.imageModel,
+    imageModel: normalizeImageModel(project.imageModel, defaults.imageModel),
     videoModel: normalizeVideoModel(project.videoModel, defaults.videoModel),
+    videoClipAudio: normalizeVideoClipAudio(project.videoClipAudio),
     ttsModel,
     ttsVoice: normalizeTtsVoice(ttsModel, project.ttsVoice),
   };
@@ -238,6 +322,10 @@ export function isElevenLabsTtsModel(model: string): boolean {
   return model.startsWith("elevenlabs/");
 }
 
+export function isKokoroTtsModel(model: string): boolean {
+  return model.includes("kokoro");
+}
+
 export function voiceOptionsForTtsModel(model: string): VoiceOption[] {
   if (isGeminiTtsModel(model)) return GEMINI_VOICE_OPTIONS;
   if (isGrokTtsModel(model)) return GROK_VOICE_OPTIONS;
@@ -249,6 +337,7 @@ export const projectApiModelsSchema = z.object({
   llmModel: z.string().min(1).max(120).optional(),
   imageModel: z.string().min(1).max(120).optional(),
   videoModel: z.string().min(1).max(120).optional(),
+  videoClipAudio: z.enum(["default", "on", "off"]).optional(),
   ttsModel: z.string().min(1).max(120).optional(),
   ttsVoice: z.string().min(1).max(60).optional(),
 });

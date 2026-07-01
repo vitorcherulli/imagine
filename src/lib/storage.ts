@@ -3,6 +3,14 @@ import fsSync from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createId } from "@paralleldrive/cuid2";
+import {
+  convertImageBufferToJpeg,
+  detectImageExt,
+  extractFirstFrameFromVideoBuffer,
+  isJpegBuffer,
+  isPngBuffer,
+  isVideoMp4Buffer,
+} from "./ffmpeg";
 import { openRouterHeaders } from "./openrouter/client";
 import {
   deleteObjectsByPrefix,
@@ -73,6 +81,98 @@ export async function assertReadableMediaFile(
   }
 }
 
+async function readLocalFileHeader(filePath: string, maxBytes = 512): Promise<Buffer> {
+  const fh = await fs.open(filePath, "r");
+  try {
+    const buf = Buffer.alloc(maxBytes);
+    const { bytesRead } = await fh.read(buf, 0, maxBytes, 0);
+    return buf.subarray(0, bytesRead);
+  } finally {
+    await fh.close();
+  }
+}
+
+/** First bytes of a project media URL — used to detect corrupt or mislabeled files. */
+export async function readMediaHeader(
+  publicUrl: string,
+  maxBytes = 512,
+): Promise<Buffer> {
+  const pathOnly = publicUrl.split("?")[0].split("#")[0];
+  if (pathOnly.startsWith("/api/media/")) {
+    const key = decodeURIComponent(pathOnly.slice("/api/media/".length));
+    if (isS3Enabled()) {
+      const buf = await getObjectBuffer(key);
+      return buf.subarray(0, Math.min(buf.length, maxBytes));
+    }
+    return readLocalFileHeader(path.join(PUBLIC_DIR, key), maxBytes);
+  }
+  if (isRemoteMediaUrl(publicUrl) && isS3Enabled()) {
+    const key = keyFromPublicUrl(publicUrl);
+    if (!key) throw new Error(`Invalid media URL: ${publicUrl}`);
+    const buf = await getObjectBuffer(key);
+    return buf.subarray(0, Math.min(buf.length, maxBytes));
+  }
+  if (isRemoteMediaUrl(publicUrl)) {
+    const res = await fetch(publicUrl, {
+      headers: { Range: `bytes=0-${maxBytes - 1}` },
+    });
+    if (!res.ok) throw new Error(`Failed to fetch ${publicUrl}`);
+    return Buffer.from(await res.arrayBuffer());
+  }
+  return readLocalFileHeader(localAbsoluteFromPublicUrl(pathOnly), maxBytes);
+}
+
+export function isValidImageMediaBuffer(buffer: Buffer): boolean {
+  return detectImageExt(buffer) !== null;
+}
+
+export function isValidVideoMediaBuffer(buffer: Buffer): boolean {
+  return isVideoMp4Buffer(buffer);
+}
+
+export async function isValidImageMediaUrl(publicUrl: string): Promise<boolean> {
+  if (!(await mediaFileExists(publicUrl))) return false;
+  try {
+    const header = await readMediaHeader(publicUrl);
+    return header.length >= 12 && isValidImageMediaBuffer(header);
+  } catch {
+    return false;
+  }
+}
+
+export async function isValidVideoMediaUrl(publicUrl: string): Promise<boolean> {
+  if (!(await mediaFileExists(publicUrl))) return false;
+  try {
+    const header = await readMediaHeader(publicUrl);
+    return header.length >= 12 && isValidVideoMediaBuffer(header);
+  } catch {
+    return false;
+  }
+}
+
+function mediaUrlBasename(publicUrl: string): string {
+  const pathOnly = publicUrl.split("?")[0].split("#")[0] ?? "";
+  return pathOnly.split("/").pop() ?? publicUrl;
+}
+
+export async function describeMediaUrlIssue(publicUrl: string): Promise<string | null> {
+  if (!(await mediaFileExists(publicUrl))) return "missing";
+  try {
+    const header = await readMediaHeader(publicUrl);
+    if (header.length < 12) return "empty or truncated";
+    const name = mediaUrlBasename(publicUrl);
+    if (/\.(mp4|mov|webm)$/i.test(name) && !isValidVideoMediaBuffer(header)) {
+      return "not a valid video file";
+    }
+    if (/\.(jpe?g|png|webp|gif|avif|heic)$/i.test(name) && !isValidImageMediaBuffer(header)) {
+      return "not a valid image file";
+    }
+    return null;
+  } catch {
+    return "unreadable";
+  }
+}
+
 export async function ensureProjectDir(projectId: string, blockId?: string): Promise<string> {
   if (isS3Enabled()) {
     return ensureLocalWorkDir(projectId, blockId);
@@ -125,6 +225,15 @@ export async function saveProjectDnaLogoBuffer(
   return writeBytes(key, buf);
 }
 
+export async function saveGalleryBuffer(
+  userId: string,
+  filename: string,
+  buf: Buffer,
+): Promise<string> {
+  const key = path.posix.join("generated", "_gallery", userId, filename);
+  return writeBytes(key, buf);
+}
+
 export async function readImageAsDataUrl(publicUrl: string): Promise<string> {
   let buf: Buffer;
   const pathOnly = publicUrl.split("?")[0].split("#")[0];
@@ -157,6 +266,79 @@ export async function readImageAsDataUrl(publicUrl: string): Promise<string> {
           ? "image/gif"
           : "image/png";
   return `data:${mime};base64,${buf.toString("base64")}`;
+}
+
+function publicAppBaseUrl(): string | null {
+  const raw = process.env.NEXT_PUBLIC_APP_URL?.trim();
+  if (!raw) return null;
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "https:") return null;
+    if (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1") {
+      return null;
+    }
+    return raw.replace(/\/$/, "");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Prepare a keyframe for Kling / OpenRouter image-to-video.
+ * Prefers a public HTTPS media URL when the stored file is already JPEG/PNG;
+ * otherwise returns a JPEG data URL (WebP/GIF and other formats are converted).
+ */
+export async function readImageAsVideoFrameUrl(publicUrl: string): Promise<string> {
+  const pathOnly = publicUrl.split("?")[0]?.split("#")[0] ?? publicUrl;
+  const urlExt = path.extname(pathOnly).toLowerCase() || undefined;
+  const buf = await readMediaBuffer(publicUrl);
+
+  if (isVideoMp4Buffer(buf)) {
+    const jpeg = await extractFirstFrameFromVideoBuffer(buf);
+    return `data:image/jpeg;base64,${jpeg.toString("base64")}`;
+  }
+
+  const detectedExt = detectImageExt(buf);
+  const needsConversion =
+    detectedExt === ".webp" ||
+    detectedExt === ".gif" ||
+    urlExt === ".webp" ||
+    urlExt === ".gif";
+
+  const base = publicAppBaseUrl();
+  const storedIsVideoSafe =
+    ((urlExt === ".jpg" || urlExt === ".jpeg") && isJpegBuffer(buf)) ||
+    (urlExt === ".png" && isPngBuffer(buf));
+
+  if (base && pathOnly.startsWith("/api/media/") && storedIsVideoSafe && !needsConversion) {
+    return `${base}${pathOnly}`;
+  }
+
+  const jpeg = await convertImageBufferToJpeg({ buffer: buf, ext: detectedExt ?? urlExt });
+  return `data:image/jpeg;base64,${jpeg.toString("base64")}`;
+}
+
+/** Load raw bytes for a project media URL (`/api/media/...` or local generated path). */
+export async function readMediaBuffer(publicUrl: string): Promise<Buffer> {
+  const pathOnly = publicUrl.split("?")[0].split("#")[0];
+  if (pathOnly.startsWith("/api/media/")) {
+    const key = decodeURIComponent(pathOnly.slice("/api/media/".length));
+    if (isS3Enabled()) {
+      return getObjectBuffer(key);
+    }
+    return fs.readFile(path.join(PUBLIC_DIR, key));
+  }
+  if (isRemoteMediaUrl(publicUrl) && isS3Enabled()) {
+    const key = keyFromPublicUrl(publicUrl);
+    if (!key) throw new Error(`Invalid media URL: ${publicUrl}`);
+    return getObjectBuffer(key);
+  }
+  if (isRemoteMediaUrl(publicUrl)) {
+    const res = await fetch(publicUrl);
+    if (!res.ok) throw new Error(`Failed to fetch ${publicUrl}`);
+    return Buffer.from(await res.arrayBuffer());
+  }
+  return fs.readFile(localAbsoluteFromPublicUrl(publicUrl));
 }
 
 export function publicUrlFor(absPath: string): string {

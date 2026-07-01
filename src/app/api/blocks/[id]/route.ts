@@ -20,13 +20,18 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 const patchSchema = z.object({
   narrativeText: z.string().max(8000).optional(),
   visualPrompt: z.string().max(2000).optional(),
-  durationSeconds: z.number().int().min(2).max(60).optional(),
+  durationSeconds: z.number().int().min(1).max(60).optional(),
   position: z.number().int().min(0).optional(),
   segmentType: z.enum(["intro", "development", "climax", "resolution"]).optional(),
   audioVolume: z.number().int().min(0).max(100).optional(),
   sceneAudioVolume: z.number().int().min(0).max(100).optional(),
   avatarId: z.union([z.string().max(64), z.null()]).optional(),
   characterName: z.union([z.string().max(120), z.null()]).optional(),
+  videoTimelineStart: z.number().min(0).max(86400).nullable().optional(),
+  narrationTimelineStart: z.number().min(0).max(86400).nullable().optional(),
+  sceneTimelineStart: z.number().min(0).max(86400).nullable().optional(),
+  videoShotCount: z.number().int().min(1).max(4).optional(),
+  keyframeFitMode: z.enum(["contain", "cover"]).optional(),
 });
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {

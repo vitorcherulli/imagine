@@ -59,6 +59,44 @@ export const STYLE_BIBLE_FIELDS: Array<{
   },
 ];
 
+export type StyleBibleFieldKey = keyof StyleBible;
+
+export type StyleBibleBlockImages = Partial<Record<StyleBibleFieldKey, string>>;
+
+export interface StyleBibleDocument {
+  fields: StyleBible;
+  blockImages: StyleBibleBlockImages;
+}
+
+export const STYLE_BIBLE_FIELD_KEYS = [
+  "colorPalette",
+  "lighting",
+  "atmosphere",
+  "world",
+  "cinematography",
+  "timeOfDay",
+] as const satisfies readonly StyleBibleFieldKey[];
+
+export const styleBibleFieldKeySchema = z.enum([
+  "colorPalette",
+  "lighting",
+  "atmosphere",
+  "world",
+  "cinematography",
+  "timeOfDay",
+]);
+
+export const styleBibleBlockImagesSchema = z
+  .object({
+    colorPalette: z.string().min(1).optional(),
+    lighting: z.string().min(1).optional(),
+    atmosphere: z.string().min(1).optional(),
+    world: z.string().min(1).optional(),
+    cinematography: z.string().min(1).optional(),
+    timeOfDay: z.string().min(1).optional(),
+  })
+  .partial();
+
 export const styleBibleSchema = z.object({
   colorPalette: z.string().min(1).max(600),
   lighting: z.string().min(1).max(600),
@@ -70,20 +108,66 @@ export const styleBibleSchema = z.object({
 
 export const styleBiblePartialSchema = styleBibleSchema.partial();
 
+export const styleBibleDocumentSchema = z.object({
+  fields: styleBiblePartialSchema,
+  blockImages: styleBibleBlockImagesSchema.optional().default({}),
+});
+
+/** @deprecated use parseStyleBibleDocument */
 export function parseStyleBible(raw: string | null | undefined): StyleBible | null {
+  return parseStyleBibleDocument(raw)?.fields ?? null;
+}
+
+export function parseStyleBibleDocument(
+  raw: string | null | undefined,
+): StyleBibleDocument | null {
   if (!raw) return null;
   try {
-    const parsed = JSON.parse(raw);
-    const result = styleBibleSchema.safeParse(parsed);
-    if (!result.success) return null;
-    return result.data;
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === "object" && "fields" in parsed) {
+      const doc = styleBibleDocumentSchema.safeParse(parsed);
+      if (!doc.success) return null;
+      return {
+        fields: mergeStyleBible(null, doc.data.fields),
+        blockImages: doc.data.blockImages ?? {},
+      };
+    }
+    const flat = styleBibleSchema.safeParse(parsed);
+    if (flat.success) {
+      return { fields: flat.data, blockImages: {} };
+    }
+    return null;
   } catch {
     return null;
   }
 }
 
-export function serializeStyleBible(bible: StyleBible): string {
-  return JSON.stringify(bible);
+export function serializeStyleBibleDocument(doc: StyleBibleDocument): string {
+  return JSON.stringify({
+    v: 2,
+    fields: doc.fields,
+    blockImages: doc.blockImages,
+  });
+}
+
+export function listEditorialBlockImageUrls(
+  doc: StyleBibleDocument | null,
+  legacyAnchorUrl?: string | null,
+): string[] {
+  const urls = doc
+    ? STYLE_BIBLE_FIELD_KEYS.map((key) => doc.blockImages[key]).filter(
+        (url): url is string => Boolean(url),
+      )
+    : [];
+  if (urls.length === 0 && legacyAnchorUrl) return [legacyAnchorUrl];
+  return urls;
+}
+
+export function serializeStyleBible(
+  bible: StyleBible,
+  blockImages: StyleBibleBlockImages = {},
+): string {
+  return serializeStyleBibleDocument({ fields: bible, blockImages });
 }
 
 export function mergeStyleBible(
@@ -110,6 +194,32 @@ export function emptyStyleBible(): StyleBible {
     cinematography: "",
     timeOfDay: "",
   };
+}
+
+const STYLE_BIBLE_LLM_KEY_ALIASES: Record<string, StyleBibleFieldKey> = {
+  color_palette: "colorPalette",
+  colorPalette: "colorPalette",
+  lighting: "lighting",
+  atmosphere: "atmosphere",
+  world: "world",
+  visual_universe: "world",
+  cinematography: "cinematography",
+  time_of_day: "timeOfDay",
+  timeOfDay: "timeOfDay",
+};
+
+/** Map LLM JSON (camelCase or snake_case) into partial style bible fields. */
+export function normalizeStyleBibleFromLlm(raw: unknown): Partial<StyleBible> {
+  if (!raw || typeof raw !== "object") return {};
+  const out: Partial<StyleBible> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value !== "string") continue;
+    const field = STYLE_BIBLE_LLM_KEY_ALIASES[key];
+    if (!field) continue;
+    const trimmed = value.trim();
+    if (trimmed) out[field] = trimmed;
+  }
+  return out;
 }
 
 /** Human-readable label from a snake_case location tag. */
@@ -259,7 +369,7 @@ export function buildEditorialReferencePrompt(input: {
     );
   } else {
     lines.push(
-      "Abstract cinematic mood board panel for editorial reference.",
+      "Abstract cinematic reference for editorial direction.",
       "Show color palette swatches, light quality, atmospheric haze, film grain and lens character.",
       "NO characters, NO faces, NO text, NO logos, NO readable locations or geography.",
       "Do not depict a garden, room, forest, tunnel or any specific place — only the LOOK of the film.",
@@ -267,6 +377,57 @@ export function buildEditorialReferencePrompt(input: {
   }
 
   lines.push("This image defines color grade and lighting mood for a multi-location story.");
+  return lines.filter(Boolean).join("\n");
+}
+
+const EDITORIAL_BLOCK_IMAGE_FOCUS: Record<StyleBibleFieldKey, string> = {
+  colorPalette:
+    "Generate ONE single image focused ONLY on the color palette — soft gradients, swatches and color relationships. NOT a grid, NOT a film strip, NOT multiple panels, NOT a collage.",
+  lighting:
+    "Generate ONE single image focused ONLY on lighting quality — key light direction, contrast, rim light, volumetric rays. NOT a collage or multi-panel layout.",
+  atmosphere:
+    "Generate ONE single image focused ONLY on atmosphere — haze, particles, weather mood, air density. Single cohesive frame, NOT a mood board grid.",
+  world:
+    "Generate ONE single image focused ONLY on visual universe motifs — textures, recurring props, material language. Single scene fragment, NOT multiple locations or panels.",
+  cinematography:
+    "Generate ONE single image focused ONLY on lens and framing character — depth of field, anamorphic bokeh, film grain. NOT a split screen or contact sheet.",
+  timeOfDay:
+    "Generate ONE single image focused ONLY on time-of-day feel — sky tone, sun angle, ambient color of the hour. Single frame, NOT a day-to-night series.",
+};
+
+export function buildEditorialBlockReferencePrompt(input: {
+  field: StyleBibleFieldKey;
+  fieldLabel: string;
+  fieldText: string;
+  project: Pick<Project, "visualStyle" | "genre" | "projectIdentity">;
+  bible: StyleBible;
+  primaryCharacter?: Pick<Avatar, "name" | "description"> | null;
+}): string {
+  const { field, fieldLabel, fieldText, project, bible, primaryCharacter } = input;
+  const identity = normalizeProjectIdentity(project.projectIdentity);
+  const lines = [
+    formatStyleBibleForPrompt(bible).trim(),
+    "",
+    `Visual style: ${project.visualStyle}.`,
+    `Genre: ${project.genre}.`,
+    ...(identity ? [`Series/brand identity: ${identity}.`] : []),
+    "",
+    EDITORIAL_BLOCK_IMAGE_FOCUS[field],
+    "",
+    `This reference is specifically for: ${fieldLabel}.`,
+    `${fieldLabel}: ${fieldText}.`,
+  ];
+
+  if (primaryCharacter && (field === "colorPalette" || field === "lighting" || field === "world")) {
+    const desc = primaryCharacter.description?.trim();
+    lines.push(
+      `Harmonize with main character "${primaryCharacter.name}"${desc ? ` (${desc})` : ""} when relevant — still ONE single image, no collage.`,
+    );
+  }
+
+  lines.push(
+    "NO text, NO logos, NO watermarks, NO comic panels, NO triptych, NO film strip layout.",
+  );
   return lines.filter(Boolean).join("\n");
 }
 

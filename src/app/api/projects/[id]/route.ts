@@ -4,6 +4,9 @@ import { tryUser } from "@/lib/auth";
 import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { projectApiModelsSchema } from "@/lib/project-api-models";
+import {
+  serializeTtsVoiceSettings,
+} from "@/lib/elevenlabs-voice-settings";
 import { serializeProjectAvatarIds } from "@/lib/project-avatars";
 import { assertOwnedProjectDna } from "@/lib/project-dna-server";
 import { getOwnedFolder } from "@/lib/project-library";
@@ -63,19 +66,40 @@ const patchSchema = z
     targetDurationSeconds: z.number().int().min(30).max(1800).optional(),
     videoFormat: z.enum(["horizontal", "vertical"]).optional(),
     cutPace: z.enum(["calm", "balanced", "dynamic", "hyper"]).optional(),
-    narrationMode: z.enum(["per_scene", "continuous"]).optional(),
+    narrationMode: z.enum(["continuous"]).optional(),
+    scriptLanguage: z.enum(["en", "pt", "es"]).optional(),
     status: z.string().optional(),
     avatarId: z.string().nullable().optional(),
     avatarIds: z.array(z.string()).optional(),
     musicPrompt: z.string().min(1).max(1500).nullable().optional(),
     musicVolume: z.number().int().min(0).max(100).optional(),
+    musicStartSeconds: z.number().min(0).max(600).optional(),
+    musicSpanSeconds: z.number().min(1).max(600).nullable().optional(),
     narrationVolume: z.number().int().min(0).max(100).optional(),
     sceneVolume: z.number().int().min(0).max(100).optional(),
     masterVolume: z.number().int().min(0).max(100).optional(),
     ttsSpeed: z.number().min(0.75).max(1.35).optional(),
+    ttsVoiceSettings: z
+      .object({
+        elevenLabs: z
+          .object({
+            stability: z.number().min(0).max(1).optional(),
+            similarityBoost: z.number().min(0).max(1).optional(),
+            style: z.number().min(0).max(1).optional(),
+            speakerBoost: z.boolean().optional(),
+          })
+          .optional(),
+        kokoro: z
+          .object({
+            expressiveness: z.enum(["subtle", "natural", "expressive"]).optional(),
+          })
+          .optional(),
+      })
+      .optional(),
     captionMode: z
       .enum(["off", "bottom", "center", "bottom-karaoke", "center-karaoke"])
       .optional(),
+    previewMode: z.enum(["auto", "proxy", "keyframe", "full", "off"]).optional(),
     folderId: z.string().nullable().optional(),
   })
   .merge(projectApiModelsSchema);
@@ -102,6 +126,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   }
 
   const patch: Record<string, unknown> = { ...parsed.data, updatedAt: new Date() };
+  if (parsed.data.ttsVoiceSettings !== undefined) {
+    patch.ttsVoiceSettings = serializeTtsVoiceSettings(parsed.data.ttsVoiceSettings);
+  }
   if (parsed.data.avatarIds !== undefined) {
     patch.avatarIds = serializeProjectAvatarIds(parsed.data.avatarIds);
     if (parsed.data.avatarId === undefined) {

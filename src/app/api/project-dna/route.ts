@@ -4,6 +4,7 @@ import { desc, eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { tryUser } from "@/lib/auth";
 import { saveProjectDnaLogoBuffer } from "@/lib/storage";
+import { normalizeDnaStyleInput } from "@/lib/dna-style";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -31,6 +32,13 @@ export async function POST(req: NextRequest) {
   const form = await req.formData();
   const name = String(form.get("name") ?? "").trim();
   const description = String(form.get("description") ?? "").trim() || null;
+  const style = normalizeDnaStyleInput({
+    genre: String(form.get("genre") ?? ""),
+    visualStyle: String(form.get("visualStyle") ?? ""),
+    voiceTone: String(form.get("voiceTone") ?? ""),
+    colorPalette: String(form.get("colorPalette") ?? ""),
+    visualMood: String(form.get("visualMood") ?? ""),
+  });
   if (!name) return NextResponse.json({ error: "Name is required" }, { status: 400 });
   if (name.length > 80) return NextResponse.json({ error: "Name too long" }, { status: 400 });
   if (description && description.length > 4000) {
@@ -63,6 +71,11 @@ export async function POST(req: NextRequest) {
     name,
     description,
     logoUrl,
+    genre: style.genre ?? null,
+    visualStyle: style.visualStyle ?? null,
+    voiceTone: style.voiceTone ?? null,
+    colorPalette: style.colorPalette ?? null,
+    visualMood: style.visualMood ?? null,
     createdAt: now,
     updatedAt: now,
   });

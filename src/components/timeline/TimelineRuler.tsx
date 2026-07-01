@@ -1,32 +1,54 @@
 "use client";
 
 import * as React from "react";
+import {
+  runTimelineScrubFollowLoop,
+  scrubTimelineAtClientX,
+} from "@/lib/timeline-scrub";
 
 interface Props {
   totalSeconds: number;
   pxPerSecond: number;
   onScrub?: (t: number) => void;
+  scrollRef: React.RefObject<HTMLElement | null>;
 }
 
-export function TimelineRuler({ totalSeconds, pxPerSecond, onScrub }: Props) {
+export function TimelineRuler({ totalSeconds, pxPerSecond, onScrub, scrollRef }: Props) {
   const rulerRef = React.useRef<HTMLDivElement>(null);
   const dragging = React.useRef(false);
+  const scrubClientXRef = React.useRef(0);
+  const stopFollowRef = React.useRef<(() => void) | null>(null);
   const width = Math.max(800, Math.ceil(totalSeconds * pxPerSecond));
   const majorEvery = pxPerSecond >= 30 ? 1 : pxPerSecond >= 15 ? 2 : pxPerSecond >= 8 ? 5 : 10;
 
   const scrubFromClientX = React.useCallback(
     (clientX: number) => {
-      const el = rulerRef.current;
-      if (!el || !onScrub) return;
-      const rect = el.getBoundingClientRect();
-      const t = Math.min(
-        totalSeconds,
-        Math.max(0, (clientX - rect.left) / pxPerSecond),
-      );
-      onScrub(t);
+      const scrollEl = scrollRef.current;
+      if (!scrollEl || !onScrub) return;
+      scrubClientXRef.current = clientX;
+      scrubTimelineAtClientX(clientX, scrollEl, pxPerSecond, totalSeconds, onScrub);
     },
-    [onScrub, pxPerSecond, totalSeconds],
+    [onScrub, pxPerSecond, scrollRef, totalSeconds],
   );
+
+  const stopFollow = React.useCallback(() => {
+    stopFollowRef.current?.();
+    stopFollowRef.current = null;
+  }, []);
+
+  const startFollow = React.useCallback(() => {
+    const scrollEl = scrollRef.current;
+    if (!scrollEl || !onScrub) return;
+    stopFollow();
+    stopFollowRef.current = runTimelineScrubFollowLoop(
+      () => scrubClientXRef.current,
+      scrollEl,
+      pxPerSecond,
+      totalSeconds,
+      onScrub,
+      () => dragging.current,
+    );
+  }, [onScrub, pxPerSecond, scrollRef, stopFollow, totalSeconds]);
 
   React.useEffect(() => {
     function onMove(e: PointerEvent) {
@@ -35,6 +57,7 @@ export function TimelineRuler({ totalSeconds, pxPerSecond, onScrub }: Props) {
     }
     function onUp() {
       dragging.current = false;
+      stopFollow();
     }
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
@@ -43,13 +66,18 @@ export function TimelineRuler({ totalSeconds, pxPerSecond, onScrub }: Props) {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
+      stopFollow();
     };
-  }, [scrubFromClientX]);
+  }, [scrubFromClientX, stopFollow]);
 
   function startScrub(e: React.PointerEvent) {
     if (!onScrub) return;
+    if (e.altKey) return;
     e.preventDefault();
     dragging.current = true;
+    rulerRef.current?.setPointerCapture(e.pointerId);
+    scrubClientXRef.current = e.clientX;
+    startFollow();
     scrubFromClientX(e.clientX);
   }
 

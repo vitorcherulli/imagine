@@ -6,7 +6,11 @@ import { NewProjectForm } from "@/components/NewProjectForm";
 
 export const dynamic = "force-dynamic";
 
-export default async function NewProjectPage() {
+export default async function NewProjectPage({
+  searchParams,
+}: {
+  searchParams: { dnaId?: string };
+}) {
   const { userId } = await auth();
   if (!userId) return null;
   const [projects, avatars, projectDna] = await Promise.all([
@@ -27,6 +31,11 @@ export default async function NewProjectPage() {
       .orderBy(desc(schema.projectDna.updatedAt)),
   ]);
 
+  const defaultDnaId =
+    searchParams.dnaId && projectDna.some((d) => d.id === searchParams.dnaId)
+      ? searchParams.dnaId
+      : null;
+
   return (
     <div className="flex h-screen w-full">
       <Sidebar projects={projects} />
@@ -38,7 +47,7 @@ export default async function NewProjectPage() {
           </p>
         </header>
         <section className="px-5 py-5">
-          <NewProjectForm avatars={avatars} projectDna={projectDna} />
+          <NewProjectForm avatars={avatars} projectDna={projectDna} defaultDnaId={defaultDnaId} />
         </section>
       </main>
     </div>

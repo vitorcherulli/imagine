@@ -18,16 +18,16 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <ClerkProvider>
-      <html lang="en" data-theme={DEFAULT_APP_THEME} suppressHydrationWarning>
-        <head>
-          <script dangerouslySetInnerHTML={{ __html: themeBootScript }} />
-        </head>
-        <body className="min-h-screen bg-background text-foreground">
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeBootScript }} />
+      </head>
+      <body className="min-h-screen bg-background text-foreground" suppressHydrationWarning>
+        <ClerkProvider>
           <ThemeProvider>{children}</ThemeProvider>
           <Toaster />
-        </body>
-      </html>
-    </ClerkProvider>
+        </ClerkProvider>
+      </body>
+    </html>
   );
 }

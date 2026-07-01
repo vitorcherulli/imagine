@@ -1,0 +1,1 @@
+ALTER TABLE story_blocks ADD COLUMN video_shot_count INTEGER NOT NULL DEFAULT 1;

@@ -4,6 +4,10 @@ import { z } from "zod";
 import { db, schema } from "@/lib/db";
 import { tryUser } from "@/lib/auth";
 import { deleteAvatarMedia } from "@/lib/storage";
+import {
+  normalizeAvatarImages,
+  parseAvatarImageUrls,
+} from "@/lib/avatar-images";
 
 export const dynamic = "force-dynamic";
 
@@ -28,6 +32,7 @@ const patchSchema = z.object({
   name: z.string().min(1).max(80).optional(),
   description: z.string().max(2000).nullable().optional(),
   primaryImageUrl: z.string().optional(),
+  imageUrls: z.array(z.string()).optional(),
 });
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
@@ -40,12 +45,34 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Invalid input" }, { status: 400 });
 
-  await db
-    .update(schema.avatars)
-    .set({ ...parsed.data, updatedAt: new Date() })
-    .where(eq(schema.avatars.id, row.id));
+  const patch: Record<string, unknown> = { updatedAt: new Date() };
+  if (parsed.data.name !== undefined) patch.name = parsed.data.name;
+  if (parsed.data.description !== undefined) patch.description = parsed.data.description;
 
-  return NextResponse.json({ ok: true });
+  const currentUrls = parseAvatarImageUrls(row);
+  if (parsed.data.imageUrls !== undefined) {
+    const normalized = normalizeAvatarImages({
+      imageUrls: parsed.data.imageUrls,
+      primaryImageUrl: parsed.data.primaryImageUrl ?? row.primaryImageUrl,
+    });
+    patch.imageUrls = JSON.stringify(normalized.imageUrls);
+    patch.primaryImageUrl = normalized.primaryImageUrl;
+  } else if (parsed.data.primaryImageUrl !== undefined) {
+    if (!currentUrls.includes(parsed.data.primaryImageUrl)) {
+      return NextResponse.json({ error: "Primary image must be in the avatar library." }, { status: 400 });
+    }
+    patch.primaryImageUrl = parsed.data.primaryImageUrl;
+  }
+
+  await db.update(schema.avatars).set(patch).where(eq(schema.avatars.id, row.id));
+
+  const [avatar] = await db
+    .select()
+    .from(schema.avatars)
+    .where(eq(schema.avatars.id, row.id))
+    .limit(1);
+
+  return NextResponse.json({ ok: true, avatar });
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {

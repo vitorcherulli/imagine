@@ -1,7 +1,8 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { Dna, Plus, Trash2, Upload, X } from "lucide-react";
+import Link from "next/link";
+import { useRef, useState, type MouseEvent } from "react";
+import { ChevronRight, Dna, Plus, Trash2, Upload, X } from "lucide-react";
 import type { ProjectDna } from "@/lib/db/schema";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,6 +10,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/components/ui/use-toast";
 import { PROJECT_IDENTITY_LABEL } from "@/lib/project-identity";
+import {
+  DnaStyleFieldsForm,
+  dnaStyleFormFromRecord,
+  type DnaStyleFormValue,
+  EMPTY_DNA_STYLE_FORM,
+} from "@/components/DnaStyleFieldsForm";
+import { formatDnaStyleSummary } from "@/lib/dna-style";
 
 export function ProjectDnaManager({ initial }: { initial: ProjectDna[] }) {
   const [items, setItems] = useState<ProjectDna[]>(initial);
@@ -20,7 +28,7 @@ export function ProjectDnaManager({ initial }: { initial: ProjectDna[] }) {
         <div>
           <h1 className="text-base font-semibold">{PROJECT_IDENTITY_LABEL}</h1>
           <p className="text-2xs text-muted-foreground">
-            Register your series or brand identity once — name, description and logo. Then pick it on each video/episode.
+            Register your series or brand identity once — voice, colors, visual style and logo. Reused on every video and publication.
           </p>
         </div>
         <Button variant="primary" size="md" onClick={() => setCreating(true)}>
@@ -56,14 +64,11 @@ export function ProjectDnaManager({ initial }: { initial: ProjectDna[] }) {
         />
       )}
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         {items.map((item) => (
           <DnaCard
             key={item.id}
             item={item}
-            onChange={(next) =>
-              setItems((prev) => prev.map((p) => (p.id === next.id ? { ...p, ...next } : p)))
-            }
             onDelete={() => setItems((prev) => prev.filter((p) => p.id !== item.id))}
           />
         ))}
@@ -83,6 +88,7 @@ function CreateDnaCard({
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [logoFile, setLogoFile] = useState<File | null>(null);
+  const [style, setStyle] = useState<DnaStyleFormValue>(EMPTY_DNA_STYLE_FORM);
   const [submitting, setSubmitting] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -96,6 +102,11 @@ function CreateDnaCard({
       const fd = new FormData();
       fd.set("name", name.trim());
       if (description.trim()) fd.set("description", description.trim());
+      if (style.genre) fd.set("genre", style.genre);
+      if (style.visualStyle) fd.set("visualStyle", style.visualStyle);
+      if (style.voiceTone) fd.set("voiceTone", style.voiceTone);
+      if (style.colorPalette.trim()) fd.set("colorPalette", style.colorPalette.trim());
+      if (style.visualMood.trim()) fd.set("visualMood", style.visualMood.trim());
       if (logoFile) fd.set("logo", logoFile);
       const res = await fetch("/api/project-dna", { method: "POST", body: fd });
       if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
@@ -179,6 +190,10 @@ function CreateDnaCard({
           )}
         </div>
       </div>
+      <div className="mt-3 rounded-md border border-border bg-background p-3">
+        <h3 className="mb-2 text-xs font-medium">Visual identity</h3>
+        <DnaStyleFieldsForm value={style} onChange={setStyle} compact />
+      </div>
       <div className="mt-3 flex justify-end gap-2">
         <Button variant="ghost" size="md" onClick={onCancel} disabled={submitting}>
           Cancel
@@ -193,39 +208,19 @@ function CreateDnaCard({
 
 function DnaCard({
   item,
-  onChange,
   onDelete,
 }: {
   item: ProjectDna;
-  onChange: (dna: ProjectDna) => void;
   onDelete: () => void;
 }) {
   const { toast } = useToast();
   const [busy, setBusy] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
 
-  async function uploadLogo(file: File) {
-    setBusy(true);
-    try {
-      const fd = new FormData();
-      fd.set("logo", file);
-      const res = await fetch(`/api/project-dna/${item.id}`, { method: "PATCH", body: fd });
-      if (!res.ok) throw new Error(await res.text());
-      const { projectDna } = (await res.json()) as { projectDna: ProjectDna };
-      onChange(projectDna);
-      toast({ title: "Logo updated" });
-    } catch (err) {
-      toast({
-        title: "Update failed",
-        description: err instanceof Error ? err.message : String(err),
-        variant: "destructive",
-      });
-    } finally {
-      setBusy(false);
-    }
-  }
+  const styleSummary = formatDnaStyleSummary(item);
 
-  async function remove() {
+  async function remove(e: MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
     if (!confirm(`Delete "${item.name}"? Projects using this DNA will have no selection.`)) return;
     setBusy(true);
     try {
@@ -244,46 +239,52 @@ function DnaCard({
   }
 
   return (
-    <div className="rounded-lg border border-border bg-panel">
-      <button
-        type="button"
-        disabled={busy}
-        onClick={() => fileRef.current?.click()}
-        className="flex w-full items-center justify-center border-b border-border bg-background p-4 hover:bg-muted/40"
-        title="Change logo"
-      >
-        {item.logoUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={item.logoUrl} alt={item.name} className="max-h-16 max-w-full object-contain" />
-        ) : (
-          <div className="flex flex-col items-center gap-1 text-muted-foreground">
-            <Dna className="h-6 w-6" />
-            <span className="text-2xs">Add logo</span>
-          </div>
-        )}
-      </button>
-      <input
-        ref={fileRef}
-        type="file"
-        accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
-        hidden
-        onChange={(e) => {
-          const f = e.target.files?.[0];
-          if (f) void uploadLogo(f);
-          e.currentTarget.value = "";
-        }}
-      />
-      <div className="flex items-start justify-between gap-2 px-3 py-2">
-        <div className="min-w-0">
-          <h3 className="truncate text-sm font-medium">{item.name}</h3>
-          {item.description && (
-            <p className="line-clamp-3 text-2xs text-muted-foreground">{item.description}</p>
+    <div className="group relative rounded-lg border border-border bg-panel transition-colors hover:border-accent/30">
+      <Link href={`/dna/${item.id}`} className="block">
+        <div className="flex w-full items-center justify-center border-b border-border bg-background p-4">
+          {item.logoUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={item.logoUrl} alt={item.name} className="max-h-16 max-w-full object-contain" />
+          ) : (
+            <div className="flex flex-col items-center gap-1 text-muted-foreground">
+              <Dna className="h-6 w-6" />
+              <span className="text-2xs">No logo yet</span>
+            </div>
           )}
         </div>
-        <Button variant="ghost" size="icon-sm" onClick={remove} disabled={busy}>
-          <Trash2 className="h-3.5 w-3.5" />
-        </Button>
-      </div>
+        <div className="px-3 py-2.5">
+          <div className="flex items-start justify-between gap-2">
+            <h3 className="truncate text-sm font-medium group-hover:text-accent">{item.name}</h3>
+            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+          </div>
+          {item.description ? (
+            <p className="mt-0.5 line-clamp-2 text-2xs text-muted-foreground">{item.description}</p>
+          ) : null}
+          {styleSummary ? (
+            <p className="mt-1 line-clamp-2 text-[10px] text-accent/90">{styleSummary}</p>
+          ) : (
+            <p className="mt-1 text-[10px] text-muted-foreground">Add colors & style inside</p>
+          )}
+          {item.learnedNotes ? (
+            <p className="mt-1 line-clamp-2 text-[10px] text-muted-foreground">
+              <span className="font-medium text-foreground/80">Memory: </span>
+              {item.learnedNotes.split("\n").slice(-2).join(" · ")}
+            </p>
+          ) : null}
+        </div>
+        <div className="border-t border-border px-3 py-2 text-[10px] text-muted-foreground group-hover:text-foreground/80">
+          Open to edit identity, photos & linked videos
+        </div>
+      </Link>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        className="absolute right-2 top-2 bg-background/80 opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100"
+        onClick={remove}
+        disabled={busy}
+      >
+        <Trash2 className="h-3.5 w-3.5" />
+      </Button>
     </div>
   );
 }

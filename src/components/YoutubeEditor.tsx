@@ -32,10 +32,7 @@ function resolveInitialCoverAvatarId(
   if (initial?.coverAvatarId && cast.some((a) => a.id === initial.coverAvatarId)) {
     return initial.coverAvatarId;
   }
-  if (project.avatarId && cast.some((a) => a.id === project.avatarId)) {
-    return project.avatarId;
-  }
-  return cast[0]?.id ?? null;
+  return null;
 }
 
 export function YoutubeEditor({ project, initial, avatars = [] }: Props) {
@@ -121,18 +118,18 @@ export function YoutubeEditor({ project, initial, avatars = [] }: Props) {
   }
 
   async function generateAll() {
-    if (!coverAvatarId) {
-      toast({
-        variant: "destructive",
-        title: "Select an avatar",
-        description: "Choose who appears on the cover before generating.",
-      });
-      return;
-    }
     setGenerating(true);
     try {
       const json = await callApi({ thumbnailMode, scope: "all", avatarId: apiAvatarId() });
       applyYoutubeRow(json.youtube);
+      if (!json.youtube?.thumbnailUrl) {
+        toast({
+          variant: "destructive",
+          title: "Metadata saved — cover missing",
+          description: "Titles and description were generated but the cover image failed.",
+        });
+        return;
+      }
       toast({ variant: "success", title: "Cover & metadata generated" });
     } catch (err) {
       toast({
@@ -146,14 +143,6 @@ export function YoutubeEditor({ project, initial, avatars = [] }: Props) {
   }
 
   async function generateThumbnailOnly() {
-    if (!coverAvatarId) {
-      toast({
-        variant: "destructive",
-        title: "Select an avatar",
-        description: "Choose who appears on the cover before regenerating.",
-      });
-      return;
-    }
     setGeneratingThumb(true);
     try {
       const json = await callApi({ thumbnailMode, scope: "thumbnail", avatarId: apiAvatarId() });
@@ -223,51 +212,78 @@ export function YoutubeEditor({ project, initial, avatars = [] }: Props) {
 
   const thumbBusy = generating || generatingThumb || deletingCover;
 
-  const coverAvatarPicker = cast.length > 0 && (
+  const coverAvatarPicker = (
     <div className="space-y-1.5">
-      <Label className="text-2xs text-muted-foreground">Cover character</Label>
+      <Label className="text-2xs text-muted-foreground">Cover character (optional)</Label>
       <p className="text-[10px] text-muted-foreground">
-        The cover uses the selected avatar&apos;s reference photos — same person across the project.
+        Pick an avatar to lock their face on the cover, or leave unselected to generate from the
+        story visuals only.
       </p>
-      <div className="flex flex-wrap gap-2">
-        {cast.map((avatar) => {
-          const selected = coverAvatarId === avatar.id;
-          return (
-            <button
-              key={avatar.id}
-              type="button"
-              onClick={() => setCoverAvatarId(avatar.id)}
-              className={cn(
-                "flex w-[4.25rem] flex-col items-center gap-1 rounded-md border p-1 transition-colors",
-                selected
-                  ? "border-accent bg-accent/10 ring-1 ring-accent/40"
-                  : "border-border hover:border-accent/30",
-              )}
-            >
-              <span className="relative h-10 w-10 overflow-hidden rounded-full bg-muted">
-                {avatar.primaryImageUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={avatar.primaryImageUrl}
-                    alt={avatar.name}
-                    className="h-full w-full object-cover"
-                  />
-                ) : (
-                  <span className="flex h-full w-full items-center justify-center text-muted-foreground">
-                    <UserSquare className="h-4 w-4" />
-                  </span>
+      {cast.length > 0 ? (
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setCoverAvatarId(null)}
+            className={cn(
+              "flex w-[4.25rem] flex-col items-center gap-1 rounded-md border p-1 transition-colors",
+              coverAvatarId === null
+                ? "border-accent bg-accent/10 ring-1 ring-accent/40"
+                : "border-border hover:border-accent/30",
+            )}
+          >
+            <span className="relative flex h-10 w-10 items-center justify-center overflow-hidden rounded-full bg-muted text-[9px] text-muted-foreground">
+              None
+            </span>
+            <span className="w-full truncate text-center text-[10px] font-medium">Story</span>
+          </button>
+          {cast.map((avatar) => {
+            const selected = coverAvatarId === avatar.id;
+            return (
+              <button
+                key={avatar.id}
+                type="button"
+                onClick={() => setCoverAvatarId(avatar.id)}
+                className={cn(
+                  "flex w-[4.25rem] flex-col items-center gap-1 rounded-md border p-1 transition-colors",
+                  selected
+                    ? "border-accent bg-accent/10 ring-1 ring-accent/40"
+                    : "border-border hover:border-accent/30",
                 )}
-              </span>
-              <span className="w-full truncate text-center text-[10px] font-medium">
-                {avatar.name}
-              </span>
-            </button>
-          );
-        })}
-      </div>
+              >
+                <span className="relative h-10 w-10 overflow-hidden rounded-full bg-muted">
+                  {avatar.primaryImageUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={avatar.primaryImageUrl}
+                      alt={avatar.name}
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <span className="flex h-full w-full items-center justify-center text-muted-foreground">
+                      <UserSquare className="h-4 w-4" />
+                    </span>
+                  )}
+                </span>
+                <span className="w-full truncate text-center text-[10px] font-medium">
+                  {avatar.name}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="text-[10px] text-muted-foreground">
+          No avatars yet — the cover will be generated from your story. Add avatars in{" "}
+          <a href="/avatars" className="text-accent underline-offset-2 hover:underline">
+            Avatars
+          </a>{" "}
+          if you want a specific person on the cover.
+        </p>
+      )}
       {selectedAvatar && selectedAvatarPhotoCount === 0 && (
-        <p className="text-[10px] text-destructive">
-          &quot;{selectedAvatar.name}&quot; has no photos — upload references in Avatars.
+        <p className="text-[10px] text-amber-600 dark:text-amber-500">
+          &quot;{selectedAvatar.name}&quot; has no photos — cover will use story visuals without
+          identity lock.
         </p>
       )}
       {coverAvatarChanged && (
@@ -332,7 +348,7 @@ export function YoutubeEditor({ project, initial, avatars = [] }: Props) {
           variant="primary"
           size="md"
           className="mt-4"
-          disabled={generating || !coverAvatarId}
+          disabled={generating}
         >
           {generating ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -440,7 +456,7 @@ export function YoutubeEditor({ project, initial, avatars = [] }: Props) {
                 size="sm"
                 className="w-full"
                 onClick={generateThumbnailOnly}
-                disabled={thumbBusy || !data.thumbnailPrompt || !coverAvatarId}
+                disabled={thumbBusy || !data.thumbnailPrompt}
               >
                 {generatingThumb ? (
                   <Loader2 className="h-3 w-3 animate-spin" />

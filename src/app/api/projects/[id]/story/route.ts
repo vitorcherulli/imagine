@@ -9,12 +9,11 @@ import {
   buildStoryUserPrompt,
   type BlockDraft,
 } from "@/lib/story-prompts";
-import { assignBlockAvatarFromStory, resolveProjectAvatar } from "@/lib/avatar-block";
+import { assignBlockAvatarFromStory } from "@/lib/avatar-block";
 import { resolveProjectCast } from "@/lib/project-avatars";
 import { resolveProjectApiModels } from "@/lib/project-api-models";
 import { resolveProjectIdentityForProject } from "@/lib/project-dna-server";
 import {
-  generateAndSaveAnchor,
   generateAndSaveStyleBible,
   normalizeLocationTag,
 } from "@/lib/style-bible-server";
@@ -22,8 +21,9 @@ import {
   clampContinuousCutDuration,
   clampVisualDuration,
   isVisualCutOnly,
-  normalizeNarrationMode,
 } from "@/lib/cut-pace";
+import { storyBlocksToScriptDraft } from "@/lib/story-to-script";
+import { saveScriptDraft } from "@/lib/script-versions-server";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -46,14 +46,13 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
       .from(schema.avatars)
       .where(eq(schema.avatars.userId, userId));
     const cast = resolveProjectCast(project, userAvatars);
-    const storyCharacters = cast.length > 0 ? cast : userAvatars;
     const projectAvatar =
       cast.length === 1
         ? cast[0]
         : cast.length > 1
-          ? cast.find((a) => a.id === project.avatarId) ?? null
-          : resolveProjectAvatar(project, userAvatars);
-    const hasCharacters = storyCharacters.length > 0;
+          ? cast.find((a) => a.id === project.avatarId) ?? cast[0] ?? null
+          : null;
+    const hasCharacters = cast.length > 0;
     const resolvedIdentity = await resolveProjectIdentityForProject(project);
     const raw = await chatCompletion({
       messages: [
@@ -69,7 +68,7 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
           role: "user",
           content: buildStoryUserPrompt(
             project,
-            storyCharacters.map((c) => ({ name: c.name, description: c.description })),
+            cast.map((c) => ({ name: c.name, description: c.description })),
             cast.length <= 1 ? projectAvatar : null,
             resolvedIdentity || undefined,
           ),
@@ -85,7 +84,6 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
       return NextResponse.json({ error: "LLM returned no blocks" }, { status: 502 });
     }
 
-    const continuous = normalizeNarrationMode(project.narrationMode) === "continuous";
 
     await db.delete(schema.storyBlocks).where(eq(schema.storyBlocks.projectId, project.id));
 
@@ -96,19 +94,17 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
         narrationGroupId: b.narrationGroupId?.trim() || null,
         narrativeText: b.narrativeText ?? "",
       };
-      const visualOnly =
-        continuous &&
-        isVisualCutOnly({
-          narrationGroupId: draft.narrationGroupId ?? null,
-          narrativeText: draft.narrativeText,
-        });
+      const visualOnly = isVisualCutOnly({
+        narrationGroupId: draft.narrationGroupId ?? null,
+        narrativeText: draft.narrativeText,
+      });
       const durationSeconds = visualOnly
         ? clampContinuousCutDuration(b.durationSeconds ?? 4, project.cutPace)
         : clampVisualDuration(b.durationSeconds ?? 8, project.cutPace);
       const { avatarId, characterName } = assignBlockAvatarFromStory(
         b.characterName,
         projectAvatar,
-        cast.length > 0 ? cast : userAvatars,
+        cast,
       );
       return {
         id: createId(),
@@ -131,14 +127,30 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
     });
     await db.insert(schema.storyBlocks).values(rows);
 
+    const scriptDraftText = storyBlocksToScriptDraft(
+      rows.map(({ narrativeText, narrationGroupId, position }) => ({
+        narrativeText,
+        narrationGroupId: narrationGroupId ?? null,
+        position,
+      })),
+    );
+    let scriptDraftResult: Awaited<ReturnType<typeof saveScriptDraft>> | null = null;
+    if (scriptDraftText) {
+      scriptDraftResult = await saveScriptDraft(project, {
+        script: scriptDraftText,
+        status: "draft",
+        versionSource: "ai_generate",
+        versionSummary: "Storyboard story",
+      });
+    }
+
     await db
       .update(schema.projects)
       .set({ status: "story_ready", updatedAt: now })
       .where(eq(schema.projects.id, project.id));
 
-    // Best-effort: editorial line (text bible + abstract reference image).
+    // Best-effort: editorial line text (per-block images are generated in Style dialog).
     let styleBible: Awaited<ReturnType<typeof generateAndSaveStyleBible>> | null = null;
-    let anchorImageUrl: string | null = null;
     let styleBibleError: string | null = null;
     try {
       const fresh = await db
@@ -148,19 +160,18 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
         .limit(1);
       if (fresh[0]) {
         styleBible = await generateAndSaveStyleBible(fresh[0]);
-        const withBible = { ...fresh[0], styleBible: JSON.stringify(styleBible) };
-        const anchor = await generateAndSaveAnchor(withBible, styleBible);
-        anchorImageUrl = anchor.anchorImageUrl;
       }
     } catch (e) {
       styleBibleError = e instanceof Error ? e.message : String(e);
-      console.error("[story] style bible / anchor generation failed:", styleBibleError);
+      console.error("[story] style bible generation failed:", styleBibleError);
     }
 
     return NextResponse.json({
       blocks: rows,
+      scriptDraft: scriptDraftResult?.script ?? scriptDraftText,
+      scriptDraftStatus: scriptDraftResult?.status ?? (scriptDraftText ? "draft" : "none"),
+      scriptDraftVersion: scriptDraftResult?.currentVersion ?? null,
       styleBible,
-      anchorImageUrl,
       styleBibleError,
     });
   } catch (err) {

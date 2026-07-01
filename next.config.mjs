@@ -3,7 +3,13 @@ const nextConfig = {
   output: "standalone",
   reactStrictMode: true,
   experimental: {
-    serverComponentsExternalPackages: ["better-sqlite3", "fluent-ffmpeg", "drizzle-orm", "postgres", "@aws-sdk/client-s3"],
+    serverComponentsExternalPackages: [
+      "better-sqlite3",
+      "fluent-ffmpeg",
+      "drizzle-orm",
+      "postgres",
+      "@aws-sdk/client-s3",
+    ],
   },
   images: {
     remotePatterns: [

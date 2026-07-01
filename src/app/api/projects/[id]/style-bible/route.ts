@@ -1,23 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
-import { and, eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "@/lib/db";
 import { tryUser } from "@/lib/auth";
 import {
   mergeStyleBible,
   parseStyleBible,
-  serializeStyleBible,
+  parseStyleBibleDocument,
   styleBiblePartialSchema,
-  styleBibleSchema,
-  type StyleBible,
+  styleBibleBlockImagesSchema,
+  type StyleBibleDocument,
 } from "@/lib/style-bible";
 import {
   generateAndSaveStyleBible,
+  generateAllEditorialBlockReferences,
+  saveStyleBibleDocument,
   StyleBibleError,
 } from "@/lib/style-bible-server";
+import { reconcileProjectStyleBible } from "@/lib/style-bible-prune";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 120;
+export const maxDuration = 300;
 
 async function getOwnedProject(projectId: string, userId: string) {
   const [p] = await db
@@ -34,7 +37,15 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   const project = await getOwnedProject(params.id, userId);
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  return NextResponse.json({ styleBible: parseStyleBible(project.styleBible) });
+  const reconciled = await reconcileProjectStyleBible(project);
+  const doc = parseStyleBibleDocument(reconciled.styleBible);
+  return NextResponse.json({
+    styleBible: doc?.fields ?? parseStyleBible(reconciled.styleBible),
+    blockImages: doc?.blockImages ?? {},
+    document: doc,
+    anchorImageUrl: reconciled.anchorImageUrl,
+    ...(reconciled.prunedCount > 0 ? { prunedStaleImages: reconciled.prunedCount } : {}),
+  });
 }
 
 export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
@@ -46,7 +57,24 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
 
   try {
     const bible = await generateAndSaveStyleBible(project);
-    return NextResponse.json({ styleBible: bible });
+    const { blockImages, errors } = await generateAllEditorialBlockReferences(project.id, bible);
+    const document = { fields: bible, blockImages };
+    const failedFields = Object.keys(errors);
+    const firstError = failedFields[0] ? errors[failedFields[0] as keyof typeof errors] : null;
+    return NextResponse.json({
+      styleBible: bible,
+      blockImages,
+      document,
+      ...(failedFields.length > 0
+        ? {
+            partial: true,
+            referenceErrors: errors,
+            warning: `Text saved; ${failedFields.length} reference image(s) failed${
+              firstError ? `: ${firstError}` : ""
+            }`,
+          }
+        : {}),
+    });
   } catch (err) {
     const status = err instanceof StyleBibleError ? 400 : 500;
     return NextResponse.json(
@@ -58,7 +86,14 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
 
 const patchBody = z.object({
   patch: styleBiblePartialSchema.optional(),
-  bible: styleBibleSchema.optional(),
+  bible: styleBiblePartialSchema.optional(),
+  blockImages: styleBibleBlockImagesSchema.optional(),
+  document: z
+    .object({
+      fields: styleBiblePartialSchema,
+      blockImages: styleBibleBlockImagesSchema.optional(),
+    })
+    .optional(),
 });
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
@@ -74,28 +109,39 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ error: "Invalid input" }, { status: 400 });
   }
 
-  const current = parseStyleBible(project.styleBible);
-  let next: StyleBible;
-  if (parsed.data.bible) {
-    next = parsed.data.bible;
-  } else if (parsed.data.patch) {
-    const merged = mergeStyleBible(current, parsed.data.patch);
-    const validated = styleBibleSchema.safeParse(merged);
-    if (!validated.success) {
-      return NextResponse.json(
-        { error: "Resulting style bible is incomplete", details: validated.error.flatten() },
-        { status: 400 },
-      );
-    }
-    next = validated.data;
+  const currentDoc = parseStyleBibleDocument(project.styleBible);
+  let nextDoc: StyleBibleDocument;
+
+  if (parsed.data.document) {
+    nextDoc = {
+      fields: mergeStyleBible(null, parsed.data.document.fields),
+      blockImages: {
+        ...(currentDoc?.blockImages ?? {}),
+        ...(parsed.data.document.blockImages ?? {}),
+      },
+    };
+  } else if (parsed.data.bible || parsed.data.patch) {
+    nextDoc = {
+      fields: mergeStyleBible(currentDoc?.fields ?? null, parsed.data.bible ?? parsed.data.patch ?? {}),
+      blockImages: {
+        ...(currentDoc?.blockImages ?? {}),
+        ...(parsed.data.blockImages ?? {}),
+      },
+    };
+  } else if (parsed.data.blockImages) {
+    nextDoc = {
+      fields: currentDoc?.fields ?? mergeStyleBible(null, {}),
+      blockImages: { ...(currentDoc?.blockImages ?? {}), ...parsed.data.blockImages },
+    };
   } else {
-    return NextResponse.json({ error: "Provide patch or bible" }, { status: 400 });
+    return NextResponse.json({ error: "Provide patch, bible, blockImages or document" }, { status: 400 });
   }
 
-  await db
-    .update(schema.projects)
-    .set({ styleBible: serializeStyleBible(next), updatedAt: new Date() })
-    .where(eq(schema.projects.id, project.id));
+  await saveStyleBibleDocument(project.id, nextDoc);
 
-  return NextResponse.json({ styleBible: next });
+  return NextResponse.json({
+    styleBible: nextDoc.fields,
+    blockImages: nextDoc.blockImages,
+    document: nextDoc,
+  });
 }

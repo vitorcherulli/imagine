@@ -32,6 +32,12 @@ const patchSchema = z.object({
   name: z.string().min(1).max(80).optional(),
   description: z.string().max(4000).nullable().optional(),
   removeLogo: z.boolean().optional(),
+  genre: z.string().max(60).nullable().optional(),
+  visualStyle: z.string().max(60).nullable().optional(),
+  voiceTone: z.string().max(60).nullable().optional(),
+  colorPalette: z.string().max(500).nullable().optional(),
+  visualMood: z.string().max(1000).nullable().optional(),
+  learnedNotes: z.string().max(8000).nullable().optional(),
 });
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
@@ -81,11 +87,20 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     logoUrl = null;
   }
 
+  const styleFields: Record<string, string | null> = {};
+  if (patch.genre !== undefined) styleFields.genre = patch.genre;
+  if (patch.visualStyle !== undefined) styleFields.visualStyle = patch.visualStyle;
+  if (patch.voiceTone !== undefined) styleFields.voiceTone = patch.voiceTone;
+  if (patch.colorPalette !== undefined) styleFields.colorPalette = patch.colorPalette;
+  if (patch.visualMood !== undefined) styleFields.visualMood = patch.visualMood;
+  if (patch.learnedNotes !== undefined) styleFields.learnedNotes = patch.learnedNotes;
+
   await db
     .update(schema.projectDna)
     .set({
       ...(patch.name !== undefined ? { name: patch.name } : {}),
       ...(patch.description !== undefined ? { description: patch.description } : {}),
+      ...styleFields,
       logoUrl,
       updatedAt: new Date(),
     })

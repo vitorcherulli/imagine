@@ -8,6 +8,7 @@ import { getVideoFormatSpec } from "@/lib/video-format";
 import { YoutubeEditor } from "@/components/YoutubeEditor";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft } from "lucide-react";
+import { reconcileProjectStyleBible } from "@/lib/style-bible-prune";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +22,16 @@ export default async function YoutubePage({ params }: { params: { id: string } }
     .where(and(eq(schema.projects.id, params.id), eq(schema.projects.userId, userId)))
     .limit(1);
   if (!project) notFound();
+
+  const reconciledStyle = await reconcileProjectStyleBible(project);
+  const hydratedProject =
+    reconciledStyle.prunedCount > 0
+      ? {
+          ...project,
+          styleBible: reconciledStyle.styleBible,
+          anchorImageUrl: reconciledStyle.anchorImageUrl,
+        }
+      : project;
 
   const [yt, userAvatars] = await Promise.all([
     db
@@ -61,7 +72,7 @@ export default async function YoutubePage({ params }: { params: { id: string } }
           </div>
         </header>
         <section className="px-5 py-5">
-          <YoutubeEditor project={project} initial={yt ?? null} avatars={userAvatars} />
+          <YoutubeEditor project={hydratedProject} initial={yt ?? null} avatars={userAvatars} />
         </section>
       </main>
     </div>

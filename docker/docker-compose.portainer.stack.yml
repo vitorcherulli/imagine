@@ -1,10 +1,14 @@
 # ============================================================
 # Imagine V2 — Stack única para Portainer (copiar e colar)
 # ------------------------------------------------------------
+# GOLDEN (melhor versão até 2026-06-28) — ver docker/GOLDEN_VERSION.md
+#   web:     taticweb/imagine-web@sha256:f1a8c3db4467db2abffab4da6b5cdd4739c4fbcb768ad4c3d237feb5151fabf9
+#   builder: taticweb/imagine-web-builder@sha256:b1c43762333eccfaaedb73905ce655d32e772b616ab941806b87b0cf6339b273
+# ------------------------------------------------------------
 # Defina as variáveis sensíveis no Portainer (Environment variables)
 # ou copie docker/.env.portainer.example → docker/.env.portainer (local, gitignored).
 #
-# Ao subir, o serviço migrator (e o web na nova imagem) aplicam drizzle/pg + hotfixes.
+# Ao subir, o serviço migrator aplica drizzle/pg + hotfixes.
 # Se faltar coluna no Postgres: docker/pg-hotfix.sql ou force o migrator:
 #   docker service update --force <stack>_migrator
 #
@@ -50,6 +54,14 @@ x-common-env: &common-env
   S3_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
   S3_FORCE_PATH_STYLE: "true"
   S3_PUBLIC_URL: ${S3_PUBLIC_URL:-https://s3.papo.global}
+
+  # Stock media (optional — image/video search in script & keyframe import)
+  PEXELS_API_KEY: ${PEXELS_API_KEY:-}
+  # Google Programmable Search — enable "Image search" on the engine
+  # https://programmablesearchengine.google.com/
+  GOOGLE_CUSTOM_SEARCH_API_KEY: ${GOOGLE_CUSTOM_SEARCH_API_KEY:-}
+  GOOGLE_CSE_ID: ${GOOGLE_CSE_ID:-}
+  SERPER_API_KEY: ${SERPER_API_KEY:-}
 
 services:
   migrator:
@@ -102,9 +114,12 @@ services:
         - traefik.http.routers.imagine-web.tls.certresolver=le
         - traefik.http.routers.imagine-web.service=imagine-web
         - traefik.http.services.imagine-web.loadbalancer.server.port=3000
+        - traefik.http.routers.imagine-web.middlewares=imagine-long-timeout@docker
+        - traefik.http.middlewares.imagine-long-timeout.buffering.maxResponseBodyBytes=0
+        - traefik.http.middlewares.imagine-long-timeout.buffering.maxRequestBodyBytes=0
         - traefik.http.routers.imagine-web-http.rule=Host(`${APP_HOST:-imagine.papo.global}`)
         - traefik.http.routers.imagine-web-http.entrypoints=web
-        - traefik.http.routers.imagine-web-http.middlewares=imagine-https-redirect
+        - traefik.http.routers.imagine-web-http.middlewares=imagine-https-redirect@docker
         - traefik.http.middlewares.imagine-https-redirect.redirectscheme.scheme=https
         - traefik.http.middlewares.imagine-https-redirect.redirectscheme.permanent=true
 

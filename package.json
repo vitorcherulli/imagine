@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p ${PORT:-3000}",
+    "dev:clean": "./scripts/dev-clean.sh",
     "dev:daemon": "./scripts/dev-server.sh start",
     "dev:stop": "./scripts/dev-server.sh stop",
     "dev:restart": "./scripts/dev-server.sh restart",

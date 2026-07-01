@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { tryUser } from "@/lib/auth";
 import { getBlockForUser, setBlockStatus } from "@/lib/block-helpers";
 import { generateImage } from "@/lib/openrouter/images";
-import { downloadToFile, readImageAsDataUrl, saveBase64 } from "@/lib/storage";
+import { saveBuffer, deleteMediaByPublicUrl, withCacheBuster } from "@/lib/storage";
+import { fitImageBufferToVideoFormat } from "@/lib/ffmpeg";
 import { resolveProjectApiModels } from "@/lib/project-api-models";
 import {
   avatarHintForPrompt,
@@ -14,6 +15,8 @@ import {
   buildSceneVisualPrompt,
   parseStyleBible,
 } from "@/lib/style-bible";
+import { loadEditorialReferenceDataUrls } from "@/lib/style-bible-server";
+import { registerMediaLibraryAssetSafe } from "@/lib/media-library-server";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -34,26 +37,16 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
       const avatarHint = avatarHintForPrompt(avatar);
       const avatarRefs = (await avatarReferenceImages(avatar)) ?? [];
 
-      let editorialRef: string | null = null;
-      if (owned.project.anchorImageUrl) {
-        try {
-          editorialRef = await readImageAsDataUrl(owned.project.anchorImageUrl);
-        } catch (e) {
-          console.warn("[keyframe] failed to load editorial reference:", e);
-        }
-      }
+      const editorialRefs = await loadEditorialReferenceDataUrls(owned.project);
 
-      const referenceImages = [
-        ...(editorialRef ? [editorialRef] : []),
-        ...avatarRefs,
-      ];
+      const referenceImages = [...editorialRefs, ...avatarRefs];
 
       const prompt = buildSceneVisualPrompt({
         project: owned.project,
         block: owned.block,
         bible,
         avatarHint,
-        hasEditorialReference: !!editorialRef,
+        hasEditorialReference: editorialRefs.length > 0,
       });
 
       const models = resolveProjectApiModels(owned.project);
@@ -64,15 +57,37 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
         imageSize: "1K",
         referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
       });
-      let url: string;
-      if (img.url) {
-        url = await downloadToFile(img.url, owned.project.id, owned.block.id, "keyframe.png");
-      } else if (img.b64) {
-        url = await saveBase64(owned.project.id, owned.block.id, "keyframe.png", img.b64);
+      let rawBuffer: Buffer;
+      if (img.b64) {
+        rawBuffer = Buffer.from(img.b64, "base64");
+      } else if (img.url) {
+        const res = await fetch(img.url);
+        if (!res.ok) throw new Error("Could not download generated image.");
+        rawBuffer = Buffer.from(await res.arrayBuffer());
       } else {
         throw new Error("No image data in response");
       }
+      const framed = await fitImageBufferToVideoFormat(
+        { buffer: rawBuffer, ext: ".png" },
+        owned.project.videoFormat,
+        owned.block.keyframeFitMode,
+      );
+      if (owned.block.keyframeUrl) {
+        await deleteMediaByPublicUrl(owned.block.keyframeUrl);
+      }
+      const savedUrl = await saveBuffer(owned.project.id, owned.block.id, "keyframe.png", framed);
+      const url = withCacheBuster(savedUrl);
       await setBlockStatus(params.id, { keyframeUrl: url, status: "image_ready" });
+      registerMediaLibraryAssetSafe({
+        userId,
+        url,
+        name: `Keyframe ¶${owned.block.position + 1}`,
+        mimeType: "image/png",
+        kind: "image",
+        source: "keyframe_ai",
+        projectId: owned.project.id,
+        blockId: owned.block.id,
+      });
     } catch (err) {
       await setBlockStatus(params.id, {
         status: "error",

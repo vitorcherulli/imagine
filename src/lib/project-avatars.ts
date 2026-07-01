@@ -11,7 +11,7 @@ export function parseProjectAvatarIds(raw: string | null | undefined): string[] 
   }
 }
 
-/** Avatars selected for this project (falls back to primary only, then empty). */
+/** Avatars selected for this project. Empty when none chosen — never implies the full library. */
 export function resolveProjectCast(
   project: Pick<Project, "avatarId" | "avatarIds">,
   userAvatars: Avatar[],

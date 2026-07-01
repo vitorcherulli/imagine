@@ -3,23 +3,103 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { UserButton } from "@clerk/nextjs";
+import { ClientUserButton } from "@/components/ClientUserButton";
 import {
   Clapperboard,
   ChevronLeft,
   ChevronRight,
   Dna,
-  Plus,
+  Film,
+  Images,
+  LayoutGrid,
   UserSquare,
 } from "lucide-react";
 import type { Project } from "@/lib/db/schema";
 import { cn } from "@/lib/utils";
+import { projectEditorHref } from "@/lib/social-content";
 import { Button } from "@/components/ui/button";
 import { AppSettingsDialog } from "@/components/AppSettingsDialog";
 import {
   readSidebarCollapsed,
   writeSidebarCollapsed,
 } from "@/lib/layout-preferences";
+
+function SidebarCreateLink({
+  href,
+  title,
+  icon,
+  active,
+}: {
+  href: string;
+  title: string;
+  icon: React.ReactNode;
+  active?: boolean;
+}) {
+  return (
+    <Button
+      asChild
+      variant="outline"
+      size="icon-sm"
+      className={cn(
+        "h-7 w-7 rounded-md",
+        active && "border-accent bg-accent text-accent-foreground hover:bg-accent/90",
+      )}
+    >
+      <Link href={href} title={title}>
+        {icon}
+      </Link>
+    </Button>
+  );
+}
+
+function SidebarNavLink({
+  href,
+  title,
+  label,
+  icon,
+  active,
+  collapsed = false,
+}: {
+  href: string;
+  title: string;
+  label: string;
+  icon: React.ReactNode;
+  active?: boolean;
+  collapsed?: boolean;
+}) {
+  if (collapsed) {
+    return (
+      <Link
+        href={href}
+        title={title}
+        className={cn(
+          "flex h-8 w-8 items-center justify-center rounded-md transition-colors",
+          active
+            ? "bg-accent text-accent-foreground"
+            : "text-foreground/80 hover:bg-muted hover:text-foreground",
+        )}
+      >
+        {icon}
+      </Link>
+    );
+  }
+
+  return (
+    <Link
+      href={href}
+      title={title}
+      className={cn(
+        "mx-1.5 mb-1 flex items-center gap-2 rounded-md px-2.5 py-1.5 text-xs transition-colors",
+        active
+          ? "bg-accent text-accent-foreground"
+          : "text-foreground/80 hover:bg-muted",
+      )}
+    >
+      {icon}
+      {label}
+    </Link>
+  );
+}
 
 export function Sidebar({
   projects,
@@ -30,6 +110,8 @@ export function Sidebar({
 }) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = React.useState(false);
+  const videoCreateActive = pathname === "/projects/new";
+  const socialCreateActive = pathname === "/publications/new";
 
   React.useEffect(() => {
     setCollapsed(readSidebarCollapsed());
@@ -50,35 +132,51 @@ export function Sidebar({
         collapsed ? "w-12" : "w-60",
       )}
     >
-      <Link
-        href="/"
-        title="Voltar para os projetos"
+      <div
         className={cn(
-          "flex items-center border-b border-border py-2.5 transition-colors hover:bg-muted/40",
-          collapsed ? "justify-center px-1" : "gap-2 px-3",
+          "flex border-b border-border py-2.5",
+          collapsed ? "flex-col items-center gap-1.5 px-1" : "items-center gap-2 px-3",
         )}
       >
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-accent text-accent-foreground">
-          <Clapperboard className="h-4 w-4" />
-        </span>
-        {!collapsed && (
-          <span className="min-w-0 truncate text-sm font-semibold tracking-tight">
-            Imagine
+        <Link
+          href="/"
+          title="Voltar para os projetos"
+          className={cn(
+            "flex min-w-0 items-center transition-colors hover:opacity-90",
+            collapsed ? "justify-center" : "min-w-0 flex-1 gap-2",
+          )}
+        >
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-accent text-accent-foreground">
+            <Clapperboard className="h-4 w-4" />
           </span>
-        )}
-      </Link>
+          {!collapsed && (
+            <span className="min-w-0 truncate text-sm font-semibold tracking-tight">
+              Imagine
+            </span>
+          )}
+        </Link>
+        <div className={cn("flex shrink-0 items-center gap-1", collapsed && "flex-col")}>
+          <SidebarCreateLink
+            href="/projects/new"
+            title="Novo vídeo — timeline com narração"
+            active={videoCreateActive}
+            icon={<Film className="h-3.5 w-3.5" />}
+          />
+          <SidebarCreateLink
+            href="/publications/new"
+            title="Publicação social — carrossel, feed e stories"
+            active={socialCreateActive}
+            icon={<LayoutGrid className="h-3.5 w-3.5" />}
+          />
+        </div>
+      </div>
 
       {!collapsed && (
         <>
-          <div className="flex items-center justify-between px-3 pb-1 pt-3">
+          <div className="px-3 pb-1 pt-3">
             <span className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">
               Projects
             </span>
-            <Link href="/projects/new">
-              <Button variant="primary" size="icon-sm" className="rounded-md">
-                <Plus className="h-3.5 w-3.5" />
-              </Button>
-            </Link>
           </div>
 
           <nav className="flex-1 overflow-auto px-1.5 pb-2 scrollbar-thin">
@@ -88,11 +186,16 @@ export function Sidebar({
               </div>
             )}
             {projects.map((p) => {
-              const active = p.id === activeProjectId || pathname === `/projects/${p.id}`;
+              const href = projectEditorHref(p);
+              const active =
+                p.id === activeProjectId ||
+                pathname === href ||
+                pathname === `/projects/${p.id}` ||
+                pathname === `/publications/${p.id}`;
               return (
                 <Link
                   key={p.id}
-                  href={`/projects/${p.id}`}
+                  href={href}
                   className={cn(
                     "block truncate rounded-md px-2.5 py-1.5 text-xs",
                     active
@@ -106,36 +209,32 @@ export function Sidebar({
             })}
           </nav>
 
-          <Link
+          <SidebarNavLink
+            href="/gallery"
+            title="Gallery"
+            label="Gallery"
+            active={pathname?.startsWith("/gallery")}
+            icon={<Images className="h-3.5 w-3.5" />}
+          />
+          <SidebarNavLink
             href="/dna"
-            className={cn(
-              "mx-1.5 mb-1 flex items-center gap-2 rounded-md px-2.5 py-1.5 text-xs",
-              pathname?.startsWith("/dna")
-                ? "bg-accent text-accent-foreground"
-                : "text-foreground/80 hover:bg-muted",
-            )}
-          >
-            <Dna className="h-3.5 w-3.5" />
-            Project DNA
-          </Link>
-
-          <Link
+            title="Project DNA"
+            label="Project DNA"
+            active={pathname?.startsWith("/dna")}
+            icon={<Dna className="h-3.5 w-3.5" />}
+          />
+          <SidebarNavLink
             href="/avatars"
-            className={cn(
-              "mx-1.5 mb-2 flex items-center gap-2 rounded-md px-2.5 py-1.5 text-xs",
-              pathname?.startsWith("/avatars")
-                ? "bg-accent text-accent-foreground"
-                : "text-foreground/80 hover:bg-muted",
-            )}
-          >
-            <UserSquare className="h-3.5 w-3.5" />
-            Avatars
-          </Link>
+            title="Avatars"
+            label="Avatars"
+            active={pathname?.startsWith("/avatars")}
+            icon={<UserSquare className="h-3.5 w-3.5" />}
+          />
 
           <div className="space-y-1 border-t border-border px-1.5 py-2">
             <AppSettingsDialog />
             <div className="flex items-center justify-between px-1.5">
-              <UserButton afterSignOutUrl="/sign-in" />
+              <ClientUserButton afterSignOutUrl="/sign-in" />
               <span className="text-2xs text-muted-foreground">v2</span>
             </div>
           </div>
@@ -143,41 +242,34 @@ export function Sidebar({
       )}
 
       {collapsed && (
-        <div className="flex flex-1 flex-col items-center gap-2 py-3">
-          <Link
-            href="/projects/new"
-            title="New project"
-            className="flex h-8 w-8 items-center justify-center rounded-md text-foreground/80 hover:bg-muted"
-          >
-            <Plus className="h-4 w-4" />
-          </Link>
-          <Link
+        <div className="flex min-h-0 flex-1 flex-col items-center gap-2 py-3">
+          <SidebarNavLink
+            href="/gallery"
+            title="Gallery"
+            label="Gallery"
+            collapsed
+            active={pathname?.startsWith("/gallery")}
+            icon={<Images className="h-4 w-4" />}
+          />
+          <SidebarNavLink
             href="/dna"
             title="Project DNA"
-            className={cn(
-              "flex h-8 w-8 items-center justify-center rounded-md",
-              pathname?.startsWith("/dna")
-                ? "bg-accent text-accent-foreground"
-                : "text-foreground/80 hover:bg-muted",
-            )}
-          >
-            <Dna className="h-4 w-4" />
-          </Link>
-          <Link
+            label="Project DNA"
+            collapsed
+            active={pathname?.startsWith("/dna")}
+            icon={<Dna className="h-4 w-4" />}
+          />
+          <SidebarNavLink
             href="/avatars"
             title="Avatars"
-            className={cn(
-              "flex h-8 w-8 items-center justify-center rounded-md",
-              pathname?.startsWith("/avatars")
-                ? "bg-accent text-accent-foreground"
-                : "text-foreground/80 hover:bg-muted",
-            )}
-          >
-            <UserSquare className="h-4 w-4" />
-          </Link>
-          <div className="mt-auto flex flex-col items-center gap-2 pb-2">
+            label="Avatars"
+            collapsed
+            active={pathname?.startsWith("/avatars")}
+            icon={<UserSquare className="h-4 w-4" />}
+          />
+          <div className="mt-auto flex w-full flex-col items-center gap-2 border-t border-border px-1 pt-2 pb-2">
             <AppSettingsDialog collapsed />
-            <UserButton afterSignOutUrl="/sign-in" />
+            <ClientUserButton afterSignOutUrl="/sign-in" />
           </div>
         </div>
       )}

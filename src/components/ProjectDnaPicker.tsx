@@ -6,6 +6,7 @@ import { Check, Dna, ExternalLink } from "lucide-react";
 import type { ProjectDna } from "@/lib/db/schema";
 import { cn } from "@/lib/utils";
 import { PROJECT_IDENTITY_HINT, PROJECT_IDENTITY_LABEL } from "@/lib/project-identity";
+import { formatDnaStyleSummary } from "@/lib/dna-style";
 
 interface Props {
   items: ProjectDna[];
@@ -89,6 +90,11 @@ export function ProjectDnaPicker({
                 <p className="truncate text-xs font-medium">{item.name}</p>
                 {item.description?.trim() ? (
                   <p className="line-clamp-2 text-[10px] text-muted-foreground">{item.description}</p>
+                ) : null}
+                {formatDnaStyleSummary(item) ? (
+                  <p className="line-clamp-1 text-[10px] text-accent/80">
+                    {formatDnaStyleSummary(item)}
+                  </p>
                 ) : null}
               </div>
             </button>

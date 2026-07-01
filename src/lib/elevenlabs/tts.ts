@@ -1,3 +1,5 @@
+import type { ElevenLabsVoiceSettings } from "../elevenlabs-voice-settings";
+import { normalizeElevenLabsVoiceSettings } from "../elevenlabs-voice-settings";
 import { normalizeTtsSpeed } from "../narration-speed";
 
 const ELEVENLABS_BASE = "https://api.elevenlabs.io/v1";
@@ -7,6 +9,7 @@ export interface ElevenLabsSpeechInput {
   voiceId: string;
   modelId: string;
   speed?: number;
+  voiceSettings?: Partial<ElevenLabsVoiceSettings>;
   /** When true, text may contain SSML break tags. */
   useSsml?: boolean;
 }
@@ -36,6 +39,7 @@ export async function generateElevenLabsSpeech(
   if (!voiceId) throw new Error("ElevenLabs voice id is required.");
 
   const speed = normalizeTtsSpeed(input.speed ?? 1);
+  const voiceSettings = normalizeElevenLabsVoiceSettings(input.voiceSettings);
   const url = `${ELEVENLABS_BASE}/text-to-speech/${encodeURIComponent(voiceId)}`;
 
   const res = await fetch(url, {
@@ -50,8 +54,10 @@ export async function generateElevenLabsSpeech(
       model_id: input.modelId,
       ...(input.useSsml ? { enable_ssml_parsing: true } : {}),
       voice_settings: {
-        stability: 0.45,
-        similarity_boost: 0.8,
+        stability: voiceSettings.stability,
+        similarity_boost: voiceSettings.similarityBoost,
+        style: voiceSettings.style,
+        use_speaker_boost: voiceSettings.speakerBoost,
         speed,
       },
     }),

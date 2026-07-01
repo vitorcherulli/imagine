@@ -12,9 +12,10 @@ interface Props {
   onChange: (format: VideoFormat) => void;
   className?: string;
   disabled?: boolean;
+  compact?: boolean;
 }
 
-export function VideoFormatPicker({ value, onChange, className, disabled }: Props) {
+export function VideoFormatPicker({ value, onChange, className, disabled, compact }: Props) {
   return (
     <div
       role="radiogroup"
@@ -38,9 +39,10 @@ export function VideoFormatPicker({ value, onChange, className, disabled }: Prop
               onChange(id);
             }}
             className={cn(
-              "relative z-10 w-full cursor-pointer rounded-lg border p-3 text-left transition-colors",
+              "relative z-10 w-full cursor-pointer rounded-lg border text-left transition-colors",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2",
               "disabled:cursor-not-allowed disabled:opacity-60",
+              compact ? "p-2" : "p-3",
               active
                 ? "border-accent bg-accent/10 ring-1 ring-accent/40"
                 : "border-border bg-background hover:border-accent/30 hover:bg-muted/40",
@@ -50,10 +52,18 @@ export function VideoFormatPicker({ value, onChange, className, disabled }: Prop
               <Icon className={cn("h-4 w-4", active ? "text-accent" : "text-muted-foreground")} />
               <span className="text-xs font-medium">{fmt.label}</span>
             </div>
-            <p className="pointer-events-none mt-1 text-2xs text-muted-foreground">{fmt.description}</p>
-            <p className="pointer-events-none mt-1 text-2xs font-mono text-muted-foreground/80">
-              {fmt.shortLabel}
-            </p>
+            {!compact ? (
+              <>
+                <p className="pointer-events-none mt-1 text-2xs text-muted-foreground">{fmt.description}</p>
+                <p className="pointer-events-none mt-1 text-2xs font-mono text-muted-foreground/80">
+                  {fmt.shortLabel}
+                </p>
+              </>
+            ) : (
+              <p className="pointer-events-none mt-0.5 text-[10px] text-muted-foreground">
+                {fmt.shortLabel}
+              </p>
+            )}
           </button>
         );
       })}

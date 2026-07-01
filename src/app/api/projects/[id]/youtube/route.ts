@@ -6,15 +6,15 @@ import { db, schema } from "@/lib/db";
 import { tryUser } from "@/lib/auth";
 import { chatCompletion, extractJson } from "@/lib/openrouter/llm";
 import { getAspectRatio } from "@/lib/video-format";
+import { normalizeProjectScriptLanguage } from "@/lib/project-language";
 import { buildYoutubeMetadataSystemPrompt } from "@/lib/story-prompts";
 import { generateImage } from "@/lib/openrouter/images";
-import { downloadToFile, saveBase64, deleteMediaByPublicUrl } from "@/lib/storage";
+import { downloadToFile, saveBase64, deleteMediaByPublicUrl, mediaFileExists } from "@/lib/storage";
 import { resolveProjectApiModels } from "@/lib/project-api-models";
 import {
   avatarReferenceImages,
   fetchAvatarById,
 } from "@/lib/avatar-block";
-import { resolveProjectCast } from "@/lib/project-avatars";
 import { buildCoverImagePrompt, buildCoverScenePrompt } from "@/lib/thumbnail-cover";
 import { normalizeThumbnailMode, type ThumbnailMode } from "@/lib/thumbnail-mode";
 import type { Project } from "@/lib/db/schema";
@@ -39,27 +39,15 @@ async function getOwnedProject(projectId: string, userId: string) {
   return p ?? null;
 }
 
-async function resolveCoverAvatar(
+async function resolveCoverAvatarOptional(
   project: Project,
   userId: string,
   preferredId?: string | null,
 ): Promise<Awaited<ReturnType<typeof fetchAvatarById>>> {
-  if (preferredId) {
-    const picked = await fetchAvatarById(preferredId);
-    if (picked && picked.userId === userId) return picked;
-  }
-
-  const userAvatars = await db
-    .select()
-    .from(schema.avatars)
-    .where(eq(schema.avatars.userId, userId));
-  const cast = resolveProjectCast(project, userAvatars);
-  if (cast.length === 1) return cast[0]!;
-  if (project.avatarId) {
-    const primary = cast.find((a) => a.id === project.avatarId) ?? (await fetchAvatarById(project.avatarId));
-    if (primary && primary.userId === userId) return primary;
-  }
-  return cast[0] ?? null;
+  if (!preferredId) return null;
+  const picked = await fetchAvatarById(preferredId);
+  if (picked && picked.userId === userId) return picked;
+  return null;
 }
 
 async function generateThumbnailUrl(
@@ -70,24 +58,18 @@ async function generateThumbnailUrl(
   avatar: Awaited<ReturnType<typeof fetchAvatarById>>,
 ): Promise<string | null> {
   const models = resolveProjectApiModels(project);
-  const referenceImages = await avatarReferenceImages(avatar);
-  if (!referenceImages?.length) {
-    throw new Error(
-      avatar
-        ? `O avatar "${avatar.name}" não tem fotos de referência válidas.`
-        : "Nenhuma foto de referência para a capa.",
-    );
-  }
+  const referenceImages = avatar ? await avatarReferenceImages(avatar) : undefined;
+  const hasRefs = Boolean(referenceImages?.length);
   const prompt = buildCoverImagePrompt({
     basePrompt,
-    avatar,
+    avatar: hasRefs ? avatar : null,
     visualStyle: project.visualStyle,
     thumbnailMode,
     selectedTitle,
   });
 
   console.info(
-    `[youtube] cover gen avatar=${avatar?.name ?? "none"} refs=${referenceImages.length}`,
+    `[youtube] cover gen avatar=${avatar?.name ?? "none"} refs=${referenceImages?.length ?? 0}`,
   );
 
   const img = await generateImage({
@@ -95,15 +77,24 @@ async function generateThumbnailUrl(
     model: models.imageModel,
     aspectRatio: getAspectRatio(project.videoFormat),
     imageSize: "1K",
-    referenceImages,
-    referenceImagesFirst: true,
+    ...(hasRefs
+      ? { referenceImages, referenceImagesFirst: true }
+      : {}),
   });
 
   if (img.url) {
-    return downloadToFile(img.url, project.id, null, "thumbnail.png");
+    const saved = await downloadToFile(img.url, project.id, null, "thumbnail.png");
+    if (!(await mediaFileExists(saved))) {
+      throw new Error("Cover image was not stored on the server. Check S3/disk storage.");
+    }
+    return saved;
   }
   if (img.b64) {
-    return saveBase64(project.id, null, "thumbnail.png", img.b64);
+    const saved = await saveBase64(project.id, null, "thumbnail.png", img.b64);
+    if (!(await mediaFileExists(saved))) {
+      throw new Error("Cover image was not stored on the server. Check S3/disk storage.");
+    }
+    return saved;
   }
   return null;
 }
@@ -149,17 +140,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       const mode = body.thumbnailMode
         ? thumbnailMode
         : normalizeThumbnailMode(existing?.thumbnailMode);
-      const coverAvatar = await resolveCoverAvatar(
+      const coverAvatar = await resolveCoverAvatarOptional(
         project,
         userId,
-        body.avatarId ?? existing?.coverAvatarId ?? project.avatarId,
+        body.avatarId ?? existing?.coverAvatarId ?? null,
       );
-      if (!coverAvatar) {
-        return NextResponse.json(
-          { error: "Selecione um avatar do elenco para gerar a capa." },
-          { status: 400 },
-        );
-      }
       const scenePrompt = buildCoverScenePrompt({
         project,
         blocks,
@@ -183,7 +168,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           .set({
             thumbnailUrl,
             thumbnailMode: mode,
-            coverAvatarId: coverAvatar.id,
+            coverAvatarId: coverAvatar?.id ?? null,
             updatedAt: now,
           })
           .where(eq(schema.youtubeMetadata.id, existing.id));
@@ -213,11 +198,17 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     elapsed += b.durationSeconds;
   }
 
-  const coverAvatar = await resolveCoverAvatar(
-    project,
-    userId,
-    body.avatarId ?? existing?.coverAvatarId ?? project.avatarId,
-  );
+  const coverAvatar =
+    scope !== "metadata"
+      ? await resolveCoverAvatarOptional(
+          project,
+          userId,
+          body.avatarId !== undefined
+            ? body.avatarId
+            : (existing?.coverAvatarId ?? null),
+        )
+      : null;
+
   const resolvedIdentity = await resolveProjectIdentityForProject(project);
 
   const userPayload = {
@@ -264,6 +255,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
               !!coverAvatar,
               project.videoFormat,
               thumbnailMode,
+              normalizeProjectScriptLanguage(project.scriptLanguage),
             ),
           },
           { role: "user", content: JSON.stringify(userPayload, null, 2) },
@@ -281,32 +273,29 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     if (scope !== "metadata" && parsed?.thumbnailPrompt) {
       thumbnailPrompt = parsed.thumbnailPrompt;
       try {
-        const titleForThumb =
-          existing?.selectedTitle ?? parsed.titles?.[0] ?? null;
-        if (coverAvatar) {
-          const scenePrompt = buildCoverScenePrompt({
-            project,
-            blocks,
-            storedThumbnailPrompt: parsed.thumbnailPrompt,
-            avatar: coverAvatar,
-          });
-          thumbnailUrl = await generateThumbnailUrl(
-            project,
-            scenePrompt,
-            thumbnailMode,
-            titleForThumb,
-            coverAvatar,
-          );
+        const titleForThumb = existing?.selectedTitle ?? parsed.titles?.[0] ?? null;
+        const scenePrompt = buildCoverScenePrompt({
+          project,
+          blocks,
+          storedThumbnailPrompt: parsed.thumbnailPrompt,
+          avatar: coverAvatar,
+        });
+        thumbnailUrl = await generateThumbnailUrl(
+          project,
+          scenePrompt,
+          thumbnailMode,
+          titleForThumb,
+          coverAvatar,
+        );
+        if (!thumbnailUrl) {
+          throw new Error("Cover generation returned no image.");
         }
       } catch (e) {
         console.error("Thumbnail generation failed:", e);
         if (scope === "all") {
           return NextResponse.json(
             {
-              error:
-                e instanceof Error
-                  ? e.message
-                  : "Falha ao gerar a capa. Verifique as fotos do avatar.",
+              error: e instanceof Error ? e.message : "Cover generation failed.",
             },
             { status: 500 },
           );

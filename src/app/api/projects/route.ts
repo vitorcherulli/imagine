@@ -8,6 +8,9 @@ import { projectApiModelsSchema, getDefaultApiModels } from "@/lib/project-api-m
 import { serializeProjectAvatarIds } from "@/lib/project-avatars";
 import { assertOwnedProjectDna } from "@/lib/project-dna-server";
 import { getOwnedFolder } from "@/lib/project-library";
+import { normalizeProjectScriptLanguage } from "@/lib/project-language";
+
+export const dynamic = "force-dynamic";
 
 const createSchema = z
   .object({
@@ -20,7 +23,8 @@ const createSchema = z
     targetDurationSeconds: z.number().int().min(30).max(1800),
     videoFormat: z.enum(["horizontal", "vertical"]).default("horizontal"),
     cutPace: z.enum(["calm", "balanced", "dynamic", "hyper"]).default("balanced"),
-    narrationMode: z.enum(["per_scene", "continuous"]).default("per_scene"),
+    narrationMode: z.enum(["continuous"]).default("continuous"),
+    scriptLanguage: z.enum(["en", "pt", "es"]).default("en"),
     avatarId: z.string().nullable().optional(),
     avatarIds: z.array(z.string()).optional(),
     folderId: z.string().nullable().optional(),

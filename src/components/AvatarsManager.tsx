@@ -1,23 +1,20 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Plus, Star, Trash2, Upload, UserSquare, X } from "lucide-react";
+import { Plus, Star, Upload, UserSquare, X } from "lucide-react";
 import type { Avatar } from "@/lib/db/schema";
+import { parseAvatarImageUrls } from "@/lib/avatar-images";
+import { AvatarEditDialog } from "@/components/AvatarEditDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/components/ui/use-toast";
 
-type AvatarRow = Avatar & { _images?: string[] };
+type AvatarRow = Avatar;
 
 function parseImages(av: Avatar): string[] {
-  try {
-    const arr = JSON.parse(av.imageUrls || "[]");
-    return Array.isArray(arr) ? arr : [];
-  } catch {
-    return [];
-  }
+  return parseAvatarImageUrls(av);
 }
 
 export function AvatarsManager({ initial }: { initial: Avatar[] }) {
@@ -238,88 +235,56 @@ function AvatarCard({
   onChange: (a: Avatar) => void;
   onDelete: () => void;
 }) {
-  const { toast } = useToast();
+  const [editOpen, setEditOpen] = useState(false);
   const images = parseImages(avatar);
-  const [busy, setBusy] = useState(false);
-
-  async function setPrimary(url: string) {
-    setBusy(true);
-    try {
-      const res = await fetch(`/api/avatars/${avatar.id}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ primaryImageUrl: url }),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      onChange({ ...avatar, primaryImageUrl: url });
-    } catch (err) {
-      toast({
-        title: "Failed",
-        description: err instanceof Error ? err.message : String(err),
-        variant: "destructive",
-      });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function remove() {
-    if (!confirm(`Delete avatar "${avatar.name}"?`)) return;
-    setBusy(true);
-    try {
-      const res = await fetch(`/api/avatars/${avatar.id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error(await res.text());
-      onDelete();
-    } catch (err) {
-      toast({
-        title: "Failed",
-        description: err instanceof Error ? err.message : String(err),
-        variant: "destructive",
-      });
-    } finally {
-      setBusy(false);
-    }
-  }
 
   return (
-    <div className="rounded-lg border border-border bg-panel">
-      <div className="grid grid-cols-3 gap-1 p-2">
-        {images.slice(0, 6).map((url) => {
-          const isPrimary = url === avatar.primaryImageUrl;
-          return (
-            <button
-              key={url}
-              type="button"
-              disabled={busy}
-              onClick={() => setPrimary(url)}
-              className={
-                "group relative aspect-square overflow-hidden rounded-md border " +
-                (isPrimary ? "border-accent ring-1 ring-accent/40" : "border-transparent hover:border-border")
-              }
-              title={isPrimary ? "Primary" : "Set as primary"}
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={url} alt={avatar.name} className="h-full w-full object-cover" />
-              {isPrimary && (
-                <span className="absolute left-1 top-1 rounded-full bg-accent p-0.5 text-accent-foreground">
-                  <Star className="h-2.5 w-2.5" />
-                </span>
-              )}
-            </button>
-          );
-        })}
-      </div>
-      <div className="flex items-center justify-between border-t border-border px-3 py-2">
-        <div className="min-w-0">
-          <h3 className="truncate text-sm font-medium">{avatar.name}</h3>
-          {avatar.description && (
-            <p className="line-clamp-1 text-2xs text-muted-foreground">{avatar.description}</p>
-          )}
+    <>
+      <button
+        type="button"
+        onClick={() => setEditOpen(true)}
+        className="rounded-lg border border-border bg-panel text-left transition-colors hover:border-accent/40 hover:bg-panel/80"
+      >
+        <div className="grid grid-cols-3 gap-1 p-2">
+          {images.slice(0, 6).map((url) => {
+            const isPrimary = url === avatar.primaryImageUrl;
+            return (
+              <div
+                key={url}
+                className={
+                  "relative aspect-square overflow-hidden rounded-md border " +
+                  (isPrimary ? "border-accent ring-1 ring-accent/40" : "border-transparent")
+                }
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={url} alt={avatar.name} className="h-full w-full object-cover" />
+                {isPrimary && (
+                  <span className="absolute left-1 top-1 rounded-full bg-accent p-0.5 text-accent-foreground">
+                    <Star className="h-2.5 w-2.5" />
+                  </span>
+                )}
+              </div>
+            );
+          })}
         </div>
-        <Button variant="ghost" size="icon-sm" onClick={remove} disabled={busy}>
-          <Trash2 className="h-3.5 w-3.5" />
-        </Button>
-      </div>
-    </div>
+        <div className="flex items-center justify-between border-t border-border px-3 py-2">
+          <div className="min-w-0">
+            <h3 className="truncate text-sm font-medium">{avatar.name}</h3>
+            {avatar.description && (
+              <p className="line-clamp-1 text-2xs text-muted-foreground">{avatar.description}</p>
+            )}
+            <p className="mt-0.5 text-[10px] text-muted-foreground">Click to edit postures</p>
+          </div>
+        </div>
+      </button>
+
+      <AvatarEditDialog
+        avatar={avatar}
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        onUpdated={onChange}
+        onDeleted={onDelete}
+      />
+    </>
   );
 }

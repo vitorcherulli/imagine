@@ -36,6 +36,55 @@
       "when": 1750350800000,
       "tag": "0004_cover_avatar",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1750350900000,
+      "tag": "0005_script_draft",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1750350950000,
+      "tag": "0006_script_versions",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1750351000000,
+      "tag": "0007_tts_voice_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1750351100000,
+      "tag": "0008_timeline_free_edit",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1750351200000,
+      "tag": "0009_media_library",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1750351300000,
+      "tag": "0010_project_script_language",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1750351400000,
+      "tag": "0011_music_trim",
+      "breakpoints": true
     }
   ]
 }

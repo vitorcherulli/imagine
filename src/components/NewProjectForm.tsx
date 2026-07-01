@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Sparkles, Loader2 } from "lucide-react";
+import { Sparkles, Loader2, TrendingUp, Crown, Award } from "lucide-react";
 import type { Avatar, ProjectDna } from "@/lib/db/schema";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -42,18 +42,29 @@ import {
   PROJECT_IDENTITY_HINT,
   PROJECT_IDENTITY_LABEL,
 } from "@/lib/project-identity";
-import { CutPacePicker, NarrationModePicker } from "@/components/CutPacePicker";
+import { CutPacePicker } from "@/components/CutPacePicker";
+import { ProjectScriptLanguagePicker } from "@/components/ProjectScriptLanguagePicker";
 import {
   normalizeCutPace,
-  normalizeNarrationMode,
   type CutPaceId,
-  type NarrationModeId,
 } from "@/lib/cut-pace";
 import {
   DEFAULT_PROJECT_DURATION_SECONDS,
   isValidProjectDuration,
   PROJECT_DURATIONS,
 } from "@/lib/project-durations";
+import {
+  normalizeProjectScriptLanguage,
+  type ProjectScriptLanguage,
+} from "@/lib/project-language";
+import type {
+  StoryIdea,
+  TopStoryPick,
+  TrendStoryIdea,
+  TrendSuggestionsMeta,
+} from "@/lib/story-suggestions-server";
+import { cn } from "@/lib/utils";
+import { dnaStyleDefaultsForForms } from "@/lib/dna-style";
 
 
 const TONES = [
@@ -70,17 +81,202 @@ const TONES = [
 
 const DURATIONS = PROJECT_DURATIONS;
 
+function teaserText(text: string, max = 88): string {
+  const trimmed = text.trim().replace(/\s+/g, " ");
+  if (trimmed.length <= max) return trimmed;
+  return `${trimmed.slice(0, max).trimEnd()}…`;
+}
+
+function SuggestIdeaCard({
+  idea,
+  index,
+  variant,
+  topRank,
+  onPick,
+}: {
+  idea: StoryIdea | TrendStoryIdea;
+  index: number;
+  variant: "ai" | "trend";
+  topRank?: 1 | 2 | 3;
+  onPick: () => void;
+}) {
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={onPick}
+        title={`${idea.title}\n\n${idea.summary}`}
+        className={cn(
+          "group flex w-full items-start gap-2 rounded-md border bg-background px-2 py-1.5 text-left transition-colors",
+          topRank
+            ? "border-amber-400/40 bg-amber-500/[0.03] hover:border-amber-400/60 hover:bg-amber-500/[0.06]"
+            : "border-border/80",
+          !topRank &&
+            (variant === "ai"
+              ? "hover:border-accent/45 hover:bg-muted/50"
+              : "hover:border-orange-400/35 hover:bg-orange-500/[0.04]"),
+        )}
+      >
+        <span
+          className={cn(
+            "mt-px flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[9px] font-semibold tabular-nums",
+            topRank
+              ? "bg-amber-500/15 text-amber-800 dark:text-amber-200"
+              : variant === "ai"
+                ? "bg-accent/12 text-accent"
+                : "bg-orange-500/12 text-orange-700 dark:text-orange-300",
+          )}
+        >
+          {topRank ?? index + 1}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="flex items-center gap-1.5">
+            <span className="truncate text-[11px] font-semibold leading-tight text-foreground">
+              {idea.title}
+            </span>
+            {topRank ? (
+              <span className="shrink-0 rounded bg-amber-500/15 px-1 py-px text-[8px] font-semibold uppercase text-amber-800 dark:text-amber-200">
+                T{topRank}
+              </span>
+            ) : null}
+          </span>
+          <span className="mt-0.5 block truncate text-[10px] leading-snug text-muted-foreground">
+            {teaserText(idea.summary, 72)}
+          </span>
+        </span>
+      </button>
+    </li>
+  );
+}
+
+function TopPickHero({ pick, onPick }: { pick: TopStoryPick; onPick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onPick}
+      className="w-full rounded-xl border border-amber-400/50 bg-gradient-to-br from-amber-500/10 via-background to-background p-2.5 text-left shadow-sm transition-colors hover:border-amber-400/70 hover:from-amber-500/15"
+    >
+      <div className="mb-2 flex items-center gap-2">
+        <span className="inline-flex items-center gap-1 rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-950">
+          <Crown className="h-3 w-3" />
+          Top pick
+        </span>
+        <span
+          className={cn(
+            "rounded-md px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide",
+            pick.source === "trend"
+              ? "bg-orange-500/15 text-orange-800 dark:text-orange-200"
+              : "bg-accent/12 text-accent",
+          )}
+        >
+          {pick.source === "trend" ? "Trend" : "AI"}
+        </span>
+      </div>
+      <div className="truncate text-xs font-semibold leading-snug text-foreground">{pick.title}</div>
+      <p className="mt-1 truncate text-[10px] text-muted-foreground">{teaserText(pick.summary, 90)}</p>
+      <p className="mt-1.5 truncate rounded-md bg-muted/60 px-2 py-1 text-[10px] text-foreground/80">
+        <span className="font-medium text-foreground">Why: </span>
+        {teaserText(pick.rationale, 100)}
+      </p>
+    </button>
+  );
+}
+
+function TopPickSecondary({ pick, onPick }: { pick: TopStoryPick; onPick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onPick}
+      className="flex h-full w-full flex-col rounded-lg border border-border/80 bg-background px-2 py-1.5 text-left transition-colors hover:border-amber-400/40 hover:bg-muted/40"
+    >
+      <div className="mb-1.5 flex items-center gap-1.5">
+        <Award className="h-3 w-3 text-amber-600 dark:text-amber-400" />
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+          #{pick.rank}
+        </span>
+        <span
+          className={cn(
+            "ml-auto rounded px-1 py-0.5 text-[8px] font-medium uppercase",
+            pick.source === "trend" ? "text-orange-700 dark:text-orange-300" : "text-accent",
+          )}
+        >
+          {pick.source === "trend" ? "Trend" : "AI"}
+        </span>
+      </div>
+      <div className="truncate text-[11px] font-semibold leading-snug">{pick.title}</div>
+      <p className="mt-0.5 truncate text-[9px] text-muted-foreground">{teaserText(pick.rationale, 64)}</p>
+    </button>
+  );
+}
+
+function TopPicksPanel({
+  picks,
+  onPick,
+}: {
+  picks: TopStoryPick[];
+  onPick: (pick: TopStoryPick) => void;
+}) {
+  const primary = picks.find((p) => p.rank === 1);
+  const secondary = picks.filter((p) => p.rank === 2 || p.rank === 3).sort((a, b) => a.rank - b.rank);
+  if (!primary) return null;
+
+  return (
+    <section className="space-y-2.5 rounded-xl border border-amber-400/25 bg-amber-500/[0.03] p-2.5">
+      <div className="px-0.5">
+        <h3 className="text-2xs font-semibold text-foreground">AI top 3 — re-analyzed</h3>
+        <p className="text-[10px] leading-relaxed text-muted-foreground">
+          Best videos to make now, ranked from all AI + trend pitches.
+        </p>
+      </div>
+      <TopPickHero pick={primary} onPick={() => onPick(primary)} />
+      {secondary.length > 0 ? (
+        <div className="grid grid-cols-2 gap-1.5">
+          {secondary.map((pick) => (
+            <TopPickSecondary key={pick.candidateId} pick={pick} onPick={() => onPick(pick)} />
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function SuggestSectionHeader({
+  icon: Icon,
+  title,
+  hint,
+  iconClassName,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  hint?: string;
+  iconClassName?: string;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2 border-b border-border/70 pb-2">
+      <div className="flex min-w-0 items-center gap-1.5">
+        <Icon className={cn("h-3.5 w-3.5 shrink-0", iconClassName)} />
+        <h3 className="text-2xs font-semibold text-foreground">{title}</h3>
+      </div>
+      {hint ? (
+        <span className="shrink-0 text-[10px] text-muted-foreground">{hint}</span>
+      ) : null}
+    </div>
+  );
+}
+
 export function NewProjectForm({
   avatars = [],
   projectDna = [],
+  defaultDnaId = null,
 }: {
   avatars?: Avatar[];
   projectDna?: ProjectDna[];
+  defaultDnaId?: string | null;
 }) {
   const router = useRouter();
   const { toast } = useToast();
   const [title, setTitle] = React.useState("");
-  const [projectDnaId, setProjectDnaId] = React.useState<string | null>(null);
+  const [projectDnaId, setProjectDnaId] = React.useState<string | null>(defaultDnaId);
   const [storyDescription, setStoryDescription] = React.useState("");
   const [genre, setGenre] = React.useState("Children");
   const [visualStyle, setVisualStyle] = React.useState("3D Render");
@@ -90,7 +286,7 @@ export function NewProjectForm({
   );
   const [videoFormat, setVideoFormat] = React.useState<VideoFormat>("horizontal");
   const [cutPace, setCutPace] = React.useState<CutPaceId>("balanced");
-  const [narrationMode, setNarrationMode] = React.useState<NarrationModeId>("per_scene");
+  const [scriptLanguage, setScriptLanguage] = React.useState<ProjectScriptLanguage>("en");
   const [avatarCast, setAvatarCast] = React.useState<AvatarCastValue>({
     selectedIds: [],
     primaryId: null,
@@ -98,13 +294,16 @@ export function NewProjectForm({
   const [apiModels, setApiModels] = React.useState<ProjectApiModels>(getDefaultApiModels);
   const [submitting, setSubmitting] = React.useState(false);
   const [suggesting, setSuggesting] = React.useState(false);
-  const [ideas, setIdeas] = React.useState<Array<{ title: string; summary: string }>>([]);
+  const [aiIdeas, setAiIdeas] = React.useState<StoryIdea[]>([]);
+  const [trendIdeas, setTrendIdeas] = React.useState<TrendStoryIdea[]>([]);
+  const [topPicks, setTopPicks] = React.useState<TopStoryPick[]>([]);
+  const [trendsMeta, setTrendsMeta] = React.useState<TrendSuggestionsMeta | null>(null);
   const [prefsLoaded, setPrefsLoaded] = React.useState(false);
 
   React.useLayoutEffect(() => {
     const prefs = loadProjectFormPreferences();
     if (prefs) {
-      if (prefs.projectDnaId) setProjectDnaId(prefs.projectDnaId);
+      if (!defaultDnaId && prefs.projectDnaId) setProjectDnaId(prefs.projectDnaId);
       if (prefs.genre && PROJECT_GENRE_IDS.includes(prefs.genre)) setGenre(prefs.genre);
       if (prefs.visualStyle && PROJECT_VISUAL_STYLE_IDS.includes(prefs.visualStyle))
         setVisualStyle(prefs.visualStyle);
@@ -119,7 +318,7 @@ export function NewProjectForm({
         setVideoFormat(prefs.videoFormat);
       }
       if (prefs.cutPace) setCutPace(normalizeCutPace(prefs.cutPace));
-      if (prefs.narrationMode) setNarrationMode(normalizeNarrationMode(prefs.narrationMode));
+      if (prefs.scriptLanguage) setScriptLanguage(normalizeProjectScriptLanguage(prefs.scriptLanguage));
       if (prefs.avatarIds?.length) {
         setAvatarCast({
           selectedIds: prefs.avatarIds,
@@ -130,7 +329,7 @@ export function NewProjectForm({
       }
     }
     setPrefsLoaded(true);
-  }, []);
+  }, [defaultDnaId]);
 
   React.useEffect(() => {
     if (!prefsLoaded) return;
@@ -142,7 +341,7 @@ export function NewProjectForm({
       targetDurationSeconds,
       videoFormat,
       cutPace,
-      narrationMode,
+      scriptLanguage,
       avatarIds: avatarCast.selectedIds,
       primaryAvatarId: avatarCast.primaryId,
     });
@@ -155,7 +354,7 @@ export function NewProjectForm({
     targetDurationSeconds,
     videoFormat,
     cutPace,
-    narrationMode,
+    scriptLanguage,
     avatarCast,
   ]);
 
@@ -168,7 +367,10 @@ export function NewProjectForm({
 
   async function handleSuggest() {
     setSuggesting(true);
-    setIdeas([]);
+    setAiIdeas([]);
+    setTrendIdeas([]);
+    setTopPicks([]);
+    setTrendsMeta(null);
     try {
       const res = await fetch("/api/suggest", {
         method: "POST",
@@ -180,11 +382,21 @@ export function NewProjectForm({
           targetDurationSeconds,
           videoFormat,
           projectDnaId: projectDnaId ?? undefined,
+          scriptLanguage,
         }),
       });
       if (!res.ok) throw new Error((await res.json()).error ?? "Failed");
       const data = await res.json();
-      setIdeas(data.ideas ?? []);
+      setAiIdeas(data.aiIdeas ?? data.ideas ?? []);
+      setTrendIdeas(data.trendIdeas ?? []);
+      setTopPicks(data.topPicks ?? []);
+      setTrendsMeta(data.trendsMeta ?? null);
+      if ((data.trendIdeas ?? []).length === 0 && data.trendsMeta?.error) {
+        toast({
+          title: "Trends unavailable",
+          description: data.trendsMeta.error,
+        });
+      }
     } catch (err) {
       toast({
         variant: "destructive",
@@ -196,9 +408,37 @@ export function NewProjectForm({
     }
   }
 
-  function pickIdea(idea: { title: string; summary: string }) {
+  function pickIdea(idea: StoryIdea) {
     setTitle(idea.title);
     setStoryDescription(idea.summary);
+  }
+
+  function pickTopStory(pick: TopStoryPick) {
+    setTitle(pick.title);
+    setStoryDescription(pick.summary);
+  }
+
+  const topRankByCandidateId = React.useMemo(() => {
+    const map = new Map<string, 1 | 2 | 3>();
+    for (const pick of topPicks) {
+      map.set(pick.candidateId, pick.rank);
+    }
+    return map;
+  }, [topPicks]);
+
+  const hasSuggestions = aiIdeas.length > 0 || trendIdeas.length > 0;
+
+  function selectDna(id: string | null) {
+    setProjectDnaId(id);
+    if (!id) return;
+    const dna = projectDna.find((d) => d.id === id);
+    if (!dna) return;
+    const defaults = dnaStyleDefaultsForForms(dna);
+    if (defaults.genre && PROJECT_GENRE_IDS.includes(defaults.genre)) setGenre(defaults.genre);
+    if (defaults.visualStyle && PROJECT_VISUAL_STYLE_IDS.includes(defaults.visualStyle)) {
+      setVisualStyle(defaults.visualStyle);
+    }
+    if (defaults.voiceTone && TONES.includes(defaults.voiceTone)) setVoiceTone(defaults.voiceTone);
   }
 
   async function handleSubmit(e?: React.FormEvent | React.MouseEvent) {
@@ -226,7 +466,7 @@ export function NewProjectForm({
           targetDurationSeconds,
           videoFormat,
           cutPace,
-          narrationMode,
+          scriptLanguage,
           avatarId: avatarCast.primaryId,
           avatarIds: avatarCast.selectedIds,
           ...apiModels,
@@ -247,7 +487,7 @@ export function NewProjectForm({
   }
 
   return (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_320px]">
+    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_min(26rem,34vw)]">
       <div className="space-y-3 rounded-lg border border-border bg-background p-4">
         <div className="grid grid-cols-1 gap-3">
           <div>
@@ -256,7 +496,7 @@ export function NewProjectForm({
             <ProjectDnaPicker
               items={projectDna}
               value={projectDnaId}
-              onChange={setProjectDnaId}
+              onChange={selectDna}
             />
           </div>
           <div>
@@ -287,18 +527,18 @@ export function NewProjectForm({
             <VideoFormatPicker value={videoFormat} onChange={selectVideoFormat} />
           </div>
           <div>
+            <Label>Script language</Label>
+            <p className="mb-2 text-2xs text-muted-foreground">
+              Base language for AI-generated scripts and narration. English is the default.
+            </p>
+            <ProjectScriptLanguagePicker value={scriptLanguage} onChange={setScriptLanguage} />
+          </div>
+          <div>
             <Label>Cut pace</Label>
             <p className="mb-2 text-2xs text-muted-foreground">
               How fast images change on the timeline — independent of narration length.
             </p>
             <CutPacePicker value={cutPace} onChange={setCutPace} />
-          </div>
-          <div>
-            <Label>Narration mode</Label>
-            <p className="mb-2 text-2xs text-muted-foreground">
-              Continuous: one voice segment with multiple visual cuts. Per scene: narration on each cut.
-            </p>
-            <NarrationModePicker value={narrationMode} onChange={setNarrationMode} />
           </div>
           <div>
             <Label>Genre</Label>
@@ -389,18 +629,19 @@ export function NewProjectForm({
         </div>
       </div>
 
-      <div className="space-y-3 rounded-lg border border-border bg-panel p-4">
-        <div className="flex items-center justify-between">
-          <div>
+      <div className="flex flex-col gap-3 rounded-lg border border-border bg-panel p-4 xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:overflow-y-auto">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
             <h2 className="text-sm font-semibold">Suggest for me</h2>
-            <p className="text-2xs text-muted-foreground">
-              3 ideas aligned with DNA, genre, style, tone and duration.
+            <p className="mt-0.5 text-2xs leading-relaxed text-muted-foreground">
+              5 AI + 5 trends, then AI re-ranks the top 3 for you.
             </p>
           </div>
           <Button
             type="button"
             variant="outline"
             size="sm"
+            className="shrink-0"
             onClick={handleSuggest}
             disabled={suggesting}
           >
@@ -412,26 +653,81 @@ export function NewProjectForm({
             Generate
           </Button>
         </div>
-        <div className="space-y-2">
-          {ideas.length === 0 && (
-            <p className="rounded-md border border-dashed border-border bg-background px-3 py-4 text-center text-2xs text-muted-foreground">
-              Click Generate to get story ideas.
-            </p>
-          )}
-          {ideas.map((idea, i) => (
-            <button
-              key={i}
-              type="button"
-              onClick={() => pickIdea(idea)}
-              className="w-full rounded-md border border-border bg-background p-2.5 text-left transition-colors hover:border-accent/60 hover:bg-muted"
-            >
-              <div className="text-xs font-medium">{idea.title}</div>
-              <div className="mt-0.5 line-clamp-3 text-2xs text-muted-foreground">
-                {idea.summary}
-              </div>
-            </button>
-          ))}
-        </div>
+
+        {suggesting ? (
+          <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-background px-3 py-10 text-center">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            <p className="text-2xs text-muted-foreground">Ideas, trends & top 3 ranking…</p>
+          </div>
+        ) : !hasSuggestions ? (
+          <p className="rounded-lg border border-dashed border-border bg-background px-3 py-8 text-center text-2xs leading-relaxed text-muted-foreground">
+            Click Generate for story ideas and what&apos;s trending now.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-4">
+            {topPicks.length > 0 ? <TopPicksPanel picks={topPicks} onPick={pickTopStory} /> : null}
+
+            <div className="space-y-3 border-t border-border/70 pt-3">
+              <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                All suggestions
+              </p>
+
+              <section className="space-y-2">
+                <SuggestSectionHeader icon={Sparkles} title="AI ideas" iconClassName="text-accent" />
+                {aiIdeas.length === 0 ? (
+                  <p className="rounded-lg border border-dashed border-border/80 px-2.5 py-3 text-2xs text-muted-foreground">
+                    No AI ideas returned.
+                  </p>
+                ) : (
+                  <ul className="flex flex-col gap-1">
+                    {aiIdeas.map((idea, i) => (
+                      <SuggestIdeaCard
+                        key={`ai-${i}`}
+                        idea={idea}
+                        index={i}
+                        variant="ai"
+                        topRank={topRankByCandidateId.get(`ai-${i}`)}
+                        onPick={() => pickIdea(idea)}
+                      />
+                    ))}
+                  </ul>
+                )}
+              </section>
+
+              <section className="space-y-2">
+                <SuggestSectionHeader
+                  icon={TrendingUp}
+                  title="Trends"
+                  hint={
+                    trendsMeta?.provider
+                      ? `last ${trendsMeta.freshnessWindow ?? "24h"} · ${trendsMeta.provider}`
+                      : undefined
+                  }
+                  iconClassName="text-orange-500"
+                />
+                {trendIdeas.length === 0 ? (
+                  <p className="rounded-lg border border-dashed border-border/80 px-2.5 py-3 text-2xs leading-relaxed text-muted-foreground">
+                    {trendsMeta?.error ??
+                      "No trends yet — add SERPER_API_KEY in .env.local for live web trends."}
+                  </p>
+                ) : (
+                  <ul className="flex flex-col gap-1">
+                    {trendIdeas.map((idea, i) => (
+                      <SuggestIdeaCard
+                        key={`trend-${i}`}
+                        idea={idea}
+                        index={i}
+                        variant="trend"
+                        topRank={topRankByCandidateId.get(`trend-${i}`)}
+                        onPick={() => pickIdea(idea)}
+                      />
+                    ))}
+                  </ul>
+                )}
+              </section>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

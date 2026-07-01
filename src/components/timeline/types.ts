@@ -39,11 +39,28 @@ export interface TimelineState {
   pxPerSecond: number;
 }
 
-export const SEGMENT_COLORS: Record<string, string> = {
+export const SEGMENT_TYPES = ["intro", "development", "climax", "resolution"] as const;
+export type SegmentType = (typeof SEGMENT_TYPES)[number];
+
+export const SEGMENT_COLORS: Record<SegmentType, string> = {
   intro: "from-sky-500/80 to-sky-700/90",
   development: "from-violet-500/80 to-violet-700/90",
   climax: "from-rose-500/80 to-rose-700/90",
   resolution: "from-emerald-500/80 to-emerald-700/90",
+};
+
+export function segmentColor(segmentType: string): string {
+  if ((SEGMENT_TYPES as readonly string[]).includes(segmentType)) {
+    return SEGMENT_COLORS[segmentType as SegmentType];
+  }
+  return SEGMENT_COLORS.development;
+}
+
+export const SEGMENT_DOT_CLASSES: Record<SegmentType, string> = {
+  intro: "bg-sky-500",
+  development: "bg-violet-500",
+  climax: "bg-rose-500",
+  resolution: "bg-emerald-500",
 };
 
 export function statusDot(b: Block): { color: string; label: string } {
@@ -55,4 +72,49 @@ export function statusDot(b: Block): { color: string; label: string } {
     return { color: "bg-success", label: "Ready" };
   if (b.keyframeUrl) return { color: "bg-accent", label: "Keyframe ready" };
   return { color: "bg-muted-foreground/40", label: "Draft" };
+}
+
+/** One narration lane segment — merged when blocks share a speech narrationGroupId (n1, n2…). */
+export interface NarrationTrackSpan {
+  id: string;
+  leadBlock: Block;
+  blocks: Block[];
+  durationSeconds: number;
+}
+
+export function buildNarrationTrackSpans(blocks: Block[]): NarrationTrackSpan[] {
+  const spans: NarrationTrackSpan[] = [];
+  let index = 0;
+
+  while (index < blocks.length) {
+    const block = blocks[index]!;
+    const groupId = block.narrationGroupId?.trim();
+    const isSpeechGroup = Boolean(groupId && /^n\d+$/.test(groupId));
+
+    if (isSpeechGroup) {
+      const groupBlocks: Block[] = [];
+      while (index < blocks.length && blocks[index]?.narrationGroupId?.trim() === groupId) {
+        groupBlocks.push(blocks[index]!);
+        index += 1;
+      }
+      const lead = groupBlocks.find((item) => item.narrativeText.trim()) ?? groupBlocks[0]!;
+      spans.push({
+        id: `narration-${lead.id}`,
+        leadBlock: lead,
+        blocks: groupBlocks,
+        durationSeconds: groupBlocks.reduce((sum, item) => sum + item.durationSeconds, 0),
+      });
+      continue;
+    }
+
+    spans.push({
+      id: `narration-${block.id}`,
+      leadBlock: block,
+      blocks: [block],
+      durationSeconds: block.durationSeconds,
+    });
+    index += 1;
+  }
+
+  return spans;
 }

@@ -7,6 +7,7 @@ import { generateSpeech, resolveTtsVoice } from "@/lib/openrouter/tts";
 import { saveBuffer, withCacheBuster } from "@/lib/storage";
 import { hasFfmpeg, probeAudioBufferDurationSeconds, trimAudioBufferToMaxSeconds } from "@/lib/ffmpeg";
 import { resolveProjectApiModels } from "@/lib/project-api-models";
+import { resolveElevenLabsVoiceSettings, resolveKokoroVoiceSettings } from "@/lib/elevenlabs-voice-settings";
 import { normalizeTtsSpeed } from "@/lib/narration-speed";
 import {
   buildNarratorPreviewText,
@@ -16,12 +17,14 @@ import {
   resolveScriptNarrator,
 } from "@/lib/script-studio";
 import { deliverySpansInText } from "@/lib/script-tts-delivery";
+import { applyPronunciationHints } from "@/lib/script-pronunciation";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const bodySchema = z.object({
   script: z.string().max(40_000).optional(),
+  speed: z.number().min(0.75).max(1.35).optional(),
   narrator: narratorSuggestionSchema
     .pick({ voiceTone: true, ttsModel: true, ttsVoice: true })
     .optional(),
@@ -63,22 +66,29 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           ttsVoice: models.ttsVoice,
           voiceTone: narrator.voiceTone || project.voiceTone,
         });
-  const speed = normalizeTtsSpeed(project.ttsSpeed ?? 1);
+  const speed = normalizeTtsSpeed(parsed.data.speed ?? project.ttsSpeed ?? 1);
   const deliveryNotes = narrator.deliveryNotes || "";
+  const hints = notes.pronunciation?.hints;
+  const ttsPreviewText = applyPronunciationHints(previewText, hints);
   const previewSpans = deliverySpansInText(
     previewText,
     notes.delivery?.spans ?? [],
-  );
+  ).map((span) => ({
+    ...span,
+    quote: applyPronunciationHints(span.quote, hints),
+  }));
 
   try {
     const speech = await generateSpeech({
-      text: previewText,
+      text: ttsPreviewText,
       voice: ttsVoice,
       model: ttsModel,
       voiceTone: narrator.voiceTone || project.voiceTone,
       speed,
       deliveryNotes,
       deliverySpans: previewSpans.length > 0 ? previewSpans : undefined,
+      elevenLabsSettings: resolveElevenLabsVoiceSettings(project.ttsVoiceSettings),
+      kokoroExpressiveness: resolveKokoroVoiceSettings(project.ttsVoiceSettings).expressiveness,
     });
 
     let buffer = speech.buffer;

@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Check, Star, UserSquare } from "lucide-react";
+import { Check, Star, UserSquare, UserX } from "lucide-react";
 import type { Avatar } from "@/lib/db/schema";
 import { cn } from "@/lib/utils";
 
@@ -15,16 +15,61 @@ interface Props {
   avatars: Avatar[];
   value: AvatarCastValue;
   onChange: (value: AvatarCastValue) => void;
-  /** grid = new project form · compact = smaller tiles */
-  variant?: "grid" | "compact";
+  /** @deprecated Use circles layout (default). Kept for call-site compatibility. */
+  variant?: "grid" | "compact" | "circles";
   manageHref?: string;
+}
+
+export function AvatarThumb({
+  imageUrl,
+  name,
+  size = "sm",
+  fallback = "avatar",
+  className,
+}: {
+  imageUrl?: string | null;
+  name?: string;
+  size?: "sm" | "md";
+  fallback?: "avatar" | "none" | "inherit";
+  className?: string;
+}) {
+  const dim = size === "sm" ? "h-5 w-5" : "h-7 w-7";
+  const iconClass = size === "sm" ? "h-2.5 w-2.5" : "h-3.5 w-3.5";
+
+  if (imageUrl) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={imageUrl}
+        alt={name ?? ""}
+        title={name}
+        className={cn(dim, "shrink-0 rounded-full border border-border/60 object-cover bg-muted", className)}
+      />
+    );
+  }
+
+  const FallbackIcon =
+    fallback === "none" ? UserX : fallback === "inherit" ? UserSquare : UserSquare;
+
+  return (
+    <span
+      className={cn(
+        dim,
+        "flex shrink-0 items-center justify-center rounded-full border bg-muted text-muted-foreground",
+        fallback === "none" && "border-dashed",
+        className,
+      )}
+      title={name}
+    >
+      <FallbackIcon className={iconClass} />
+    </span>
+  );
 }
 
 export function AvatarCastPicker({
   avatars,
   value,
   onChange,
-  variant = "grid",
   manageHref = "/avatars",
 }: Props) {
   const { selectedIds, primaryId } = value;
@@ -34,14 +79,18 @@ export function AvatarCastPicker({
     if (isSelected) {
       const nextIds = selectedIds.filter((x) => x !== id);
       const nextPrimary =
-        primaryId === id ? (nextIds[0] ?? null) : primaryId && nextIds.includes(primaryId) ? primaryId : nextIds[0] ?? null;
+        primaryId === id
+          ? (nextIds[0] ?? null)
+          : primaryId && nextIds.includes(primaryId)
+            ? primaryId
+            : (nextIds[0] ?? null);
       onChange({ selectedIds: nextIds, primaryId: nextPrimary });
       return;
     }
     const nextIds = [...selectedIds, id];
     onChange({
       selectedIds: nextIds,
-      primaryId: primaryId && nextIds.includes(primaryId) ? primaryId : nextIds[0] ?? id,
+      primaryId: primaryId && nextIds.includes(primaryId) ? primaryId : (nextIds[0] ?? id),
     });
   }
 
@@ -65,58 +114,45 @@ export function AvatarCastPicker({
     );
   }
 
-  const tileClass =
-    variant === "compact"
-      ? "grid grid-cols-4 gap-1.5 sm:grid-cols-5"
-      : "grid grid-cols-3 gap-2 sm:grid-cols-4";
-
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-2">
       <p className="text-[10px] text-muted-foreground">
-        Tap to include in the project. Star = main character in the story.
+        Tap a circle to include in the project. Star = main character.
       </p>
-      <div className={tileClass}>
+      <div className="flex flex-wrap gap-x-3 gap-y-2.5">
         {avatars.map((avatar) => {
           const selected = selectedIds.includes(avatar.id);
           const isPrimary = primaryId === avatar.id;
           return (
-            <div key={avatar.id} className="relative">
+            <div key={avatar.id} className="relative flex w-11 flex-col items-center gap-0.5">
               <button
                 type="button"
                 onClick={() => toggle(avatar.id)}
                 className={cn(
-                  "relative flex w-full flex-col overflow-hidden rounded-md border text-left transition-colors",
+                  "relative h-10 w-10 shrink-0 overflow-hidden rounded-full border-2 bg-muted transition-colors",
                   selected
-                    ? "border-accent ring-1 ring-accent/40"
-                    : "border-border bg-panel hover:border-accent/30",
+                    ? "border-accent ring-2 ring-accent/25"
+                    : "border-border hover:border-accent/40",
                 )}
                 title={avatar.name}
               >
-                <div
-                  className={cn(
-                    "relative w-full bg-muted",
-                    variant === "compact" ? "aspect-square" : "aspect-[3/4]",
-                  )}
-                >
-                  {avatar.primaryImageUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={avatar.primaryImageUrl}
-                      alt={avatar.name}
-                      className="h-full w-full object-cover"
-                    />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center text-muted-foreground">
-                      <UserSquare className="h-5 w-5" />
-                    </div>
-                  )}
-                  {selected && (
-                    <span className="absolute right-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-accent text-accent-foreground">
-                      <Check className="h-2.5 w-2.5" />
-                    </span>
-                  )}
-                </div>
-                <span className="truncate px-1 py-0.5 text-[10px] font-medium">{avatar.name}</span>
+                {avatar.primaryImageUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={avatar.primaryImageUrl}
+                    alt={avatar.name}
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <span className="flex h-full w-full items-center justify-center text-muted-foreground">
+                    <UserSquare className="h-4 w-4" />
+                  </span>
+                )}
+                {selected && (
+                  <span className="absolute bottom-0 right-0 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-accent text-accent-foreground ring-2 ring-background">
+                    <Check className="h-2 w-2" strokeWidth={3} />
+                  </span>
+                )}
               </button>
               {selected && (
                 <button
@@ -127,15 +163,21 @@ export function AvatarCastPicker({
                   }}
                   title="Main character"
                   className={cn(
-                    "absolute -left-0.5 -top-0.5 flex h-5 w-5 items-center justify-center rounded-full border bg-background shadow-sm",
+                    "absolute -left-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full border bg-background shadow-sm",
                     isPrimary
                       ? "border-amber-400 text-amber-500"
-                      : "border-border text-muted-foreground hover:text-amber-500",
+                      : "border-border text-muted-foreground hover:border-amber-300 hover:text-amber-500",
                   )}
                 >
-                  <Star className={cn("h-2.5 w-2.5", isPrimary && "fill-current")} />
+                  <Star className={cn("h-2 w-2", isPrimary && "fill-current")} />
                 </button>
               )}
+              <span
+                className="max-w-11 truncate text-center text-[9px] leading-tight text-muted-foreground"
+                title={avatar.name}
+              >
+                {avatar.name.split(/\s+/)[0]}
+              </span>
             </div>
           );
         })}

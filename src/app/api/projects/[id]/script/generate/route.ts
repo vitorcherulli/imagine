@@ -10,8 +10,6 @@ import {
   buildScriptGenerationSystemPrompt,
   buildScriptGenerationUserPrompt,
   buildScriptSkeletonFromBriefSystemPrompt,
-  buildScriptSkeletonFromScriptSystemPrompt,
-  buildScriptSkeletonFromScriptUserPrompt,
   type GeneratedScript,
 } from "@/lib/script-prompts";
 import {
@@ -24,17 +22,20 @@ import { resolveProjectAvatar } from "@/lib/avatar-block";
 import { resolveProjectIdentityForProject } from "@/lib/project-dna-server";
 import { targetWordBudget, targetOutlineBeatRange } from "@/lib/script-budget";
 import { normalizeOutlineOptions } from "@/lib/script-outline-options";
+import { normalizeProjectScriptLanguage } from "@/lib/project-language";
 import {
   computeScriptStats,
-  compressScriptToOutlineBeats,
   countScriptStructure,
   normalizeScriptText,
+  parseScriptDraftNotes,
   type ScriptDraftNotes,
 } from "@/lib/script-studio";
 import {
   listScriptVersionMeta,
   saveScriptDraft,
 } from "@/lib/script-versions-server";
+import { runScriptWebResearch } from "@/lib/script-research-server";
+import { splitScriptForNarrator } from "@/lib/script-narration-split-server";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -53,6 +54,8 @@ const bodySchema = z.object({
       protectCta: z.boolean().optional(),
     })
     .optional(),
+  /** When true, search the web and inject verified facts into generation. */
+  webResearch: z.boolean().optional(),
 });
 
 function ttsModelOptionsForPrompt() {
@@ -100,9 +103,14 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const phase = parsed.data.phase;
   const outlineOptions = normalizeOutlineOptions(parsed.data.outlineOptions);
+  const existingNotes = parseScriptDraftNotes(project.scriptDraftNotes);
+  const draftScript = normalizeScriptText(
+    parsed.data.script ?? project.scriptDraft ?? "",
+  );
 
   try {
     const models = resolveProjectApiModels(project);
+    const scriptLanguage = normalizeProjectScriptLanguage(project.scriptLanguage);
     const userAvatars = await db
       .select()
       .from(schema.avatars)
@@ -130,32 +138,69 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     let userContent: string;
     let temperature = 0.85;
 
-    if (phase === "skeleton") {
-      const sourceScript = normalizeScriptText(
-        parsed.data.script ?? project.scriptDraft ?? "",
-      );
-      const sourceStructure = sourceScript ? countScriptStructure(sourceScript) : null;
+    let research = existingNotes.research;
+    if (parsed.data.webResearch) {
+      research = await runScriptWebResearch({
+        project,
+        currentScript: draftScript || undefined,
+        llmModel: models.llmModel,
+      });
+    }
 
-      if (sourceScript && (sourceStructure?.speech ?? 0) > 0) {
-        systemPrompt = buildScriptSkeletonFromScriptSystemPrompt(outlineOptions);
-        userContent = buildScriptSkeletonFromScriptUserPrompt({
-          sourceScript,
-          project,
-          resolvedIdentity: resolvedIdentity || undefined,
-          speechParagraphCount: sourceStructure!.speech,
-          pauseCount: sourceStructure!.pauses,
-          outlineOptions,
-        });
-        temperature = 0.35;
-      } else {
-        const beatRange = targetOutlineBeatRange(project.targetDurationSeconds ?? 30);
-        systemPrompt = buildScriptSkeletonFromBriefSystemPrompt(beatRange, outlineOptions);
-        userContent = buildScriptGenerationUserPrompt({
-          ...promptBase,
-          outlineOptions,
-        });
-        temperature = 0.7;
-      }
+    const sourceScript = draftScript;
+    const sourceStructure = sourceScript ? countScriptStructure(sourceScript) : null;
+
+    // Existing script: narrator-aware locution split — keeps every word.
+    if (
+      phase === "skeleton" &&
+      sourceScript &&
+      (sourceStructure?.speech ?? 0) > 0
+    ) {
+      const script = await splitScriptForNarrator({
+        sourceScript,
+        project,
+        narrator: existingNotes.narrator ?? null,
+        llmModel: models.llmModel,
+      });
+      const nowIso = new Date().toISOString();
+      const notes: ScriptDraftNotes = {
+        ...existingNotes,
+        updatedAt: nowIso,
+        ...(research ? { research } : {}),
+      };
+
+      const saved = await saveScriptDraft(project, {
+        script,
+        notes,
+        status: "draft",
+        versionSource: "manual_checkpoint",
+        versionSummary: "Split for narrator locution (full text kept)",
+      });
+
+      const versions = await listScriptVersionMeta(project.id, saved.currentVersion);
+
+      return NextResponse.json({
+        ok: true,
+        phase,
+        script: saved.script,
+        notes: saved.notes,
+        status: saved.status,
+        currentVersion: saved.currentVersion,
+        versionCreated: saved.versionCreated,
+        versions,
+        stats: computeScriptStats(saved.script),
+      });
+    }
+
+    if (phase === "skeleton") {
+      const beatRange = targetOutlineBeatRange(project.targetDurationSeconds ?? 30);
+      systemPrompt = buildScriptSkeletonFromBriefSystemPrompt(beatRange, outlineOptions, scriptLanguage);
+      userContent = buildScriptGenerationUserPrompt({
+        ...promptBase,
+        outlineOptions,
+        research,
+      });
+      temperature = 0.7;
     } else if (phase === "expand") {
       const outline = normalizeScriptText(
         parsed.data.script ?? parsed.data.outline ?? project.scriptDraft ?? "",
@@ -166,17 +211,21 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           { status: 400 },
         );
       }
-      systemPrompt = buildScriptExpandSystemPrompt();
+      systemPrompt = buildScriptExpandSystemPrompt(scriptLanguage);
       userContent = buildScriptExpandUserPrompt({
         project,
         outline,
         resolvedIdentity: resolvedIdentity || undefined,
         targetWordBudget: wordBudget,
+        research,
       });
       temperature = 0.65;
     } else {
-      systemPrompt = buildScriptGenerationSystemPrompt();
-      userContent = buildScriptGenerationUserPrompt(promptBase);
+      systemPrompt = buildScriptGenerationSystemPrompt(scriptLanguage);
+      userContent = buildScriptGenerationUserPrompt({
+        ...promptBase,
+        research,
+      });
     }
 
     const raw = await chatCompletion({
@@ -190,28 +239,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     });
 
     const llmJson = extractJson<Partial<GeneratedScript>>(raw);
-    let script = normalizeScriptText(llmJson.script ?? "");
+    const script = normalizeScriptText(llmJson.script ?? "");
     if (!script) {
       return NextResponse.json(
         { error: "LLM returned an empty script. Try again." },
         { status: 502 },
       );
-    }
-
-    if (phase === "skeleton") {
-      const sourceScript = normalizeScriptText(
-        parsed.data.script ?? project.scriptDraft ?? "",
-      );
-      if (sourceScript) {
-        const sourceStructure = countScriptStructure(sourceScript);
-        const outputStructure = countScriptStructure(script);
-        const lostTooManyBeats =
-          sourceStructure.speech > 0 &&
-          outputStructure.speech < Math.ceil(sourceStructure.speech * 0.85);
-        if (lostTooManyBeats) {
-          script = compressScriptToOutlineBeats(sourceScript, outlineOptions);
-        }
-      }
     }
 
     const narrator = clampNarratorToValidModel({
@@ -224,17 +257,18 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
     const nowIso = new Date().toISOString();
     const notes: ScriptDraftNotes = {
+      ...existingNotes,
       narrator,
       sourceMode: "ai",
       generatedAt: nowIso,
       updatedAt: nowIso,
+      review: undefined,
+      ...(research ? { research } : {}),
     };
 
     const summary =
       phase === "skeleton"
-        ? normalizeScriptText(parsed.data.script ?? project.scriptDraft ?? "")
-          ? "Outline extracted from script"
-          : "AI outline (beats)"
+        ? "AI outline (beats)"
         : phase === "expand"
           ? "Expanded from outline"
           : llmJson.title?.trim() || "AI generated from brief";

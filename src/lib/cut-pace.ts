@@ -1,9 +1,12 @@
 import type { LucideIcon } from "lucide-react";
 import { Clapperboard, Gauge, Rabbit, Turtle } from "lucide-react";
 import type { Project, StoryBlock } from "./db/schema";
+import { isStoryBlockPause } from "@/lib/script-pause";
 
 export type CutPaceId = "calm" | "balanced" | "dynamic" | "hyper";
-export type NarrationModeId = "per_scene" | "continuous";
+export type NarrationModeId = "continuous";
+
+export const NARRATION_MODE_LABEL = "Continuous";
 
 export interface CutPaceOption {
   id: CutPaceId;
@@ -36,19 +39,6 @@ export const CUT_PACE_OPTIONS: CutPaceOption[] = [
     label: "Hyper",
     hint: "Many cuts, Reels/TikTok style",
     icon: Rabbit,
-  },
-];
-
-export const NARRATION_MODE_OPTIONS = [
-  {
-    id: "per_scene" as const,
-    label: "Per scene",
-    hint: "Each cut gets its own narration",
-  },
-  {
-    id: "continuous" as const,
-    label: "Continuous",
-    hint: "Long narration with multiple visual cuts per segment",
   },
 ];
 
@@ -106,8 +96,8 @@ export function normalizeCutPace(value: string | null | undefined): CutPaceId {
   return "balanced";
 }
 
-export function normalizeNarrationMode(value: string | null | undefined): NarrationModeId {
-  return value === "continuous" ? "continuous" : "per_scene";
+export function normalizeNarrationMode(_value: string | null | undefined): NarrationModeId {
+  return "continuous";
 }
 
 export function getCutPaceSpec(cutPace: string | null | undefined): CutPaceSpec {
@@ -130,53 +120,33 @@ export function clampContinuousCutDuration(
 export function estimatedBlockCount(
   targetSeconds: number,
   cutPace: string | null | undefined,
-  narrationMode: string | null | undefined,
+  _narrationMode?: string | null | undefined,
 ): number {
   const spec = getCutPaceSpec(cutPace);
-  const mode = normalizeNarrationMode(narrationMode);
-  if (mode === "continuous") {
-    const units = Math.max(3, Math.ceil(targetSeconds / 12));
-    const cutsPerUnit = Math.round((spec.cutsPerUnitMin + spec.cutsPerUnitMax) / 2);
-    return Math.min(40, units * cutsPerUnit);
-  }
-  return Math.max(3, Math.ceil(targetSeconds / spec.blockDivisor));
+  const units = Math.max(3, Math.ceil(targetSeconds / 12));
+  const cutsPerUnit = Math.round((spec.cutsPerUnitMin + spec.cutsPerUnitMax) / 2);
+  return Math.min(40, units * cutsPerUnit);
 }
 
 export function buildCutPacePromptLines(
   project: Pick<Project, "cutPace" | "narrationMode" | "targetDurationSeconds">,
 ): string[] {
   const pace = normalizeCutPace(project.cutPace);
-  const mode = normalizeNarrationMode(project.narrationMode);
   const spec = getCutPaceSpec(pace);
-  const estBlocks = estimatedBlockCount(project.targetDurationSeconds, pace, mode);
+  const estBlocks = estimatedBlockCount(project.targetDurationSeconds, pace);
   const lines = [
     `Cut pace: ${pace} — visual shots should feel ${pace === "calm" ? "lingering and cinematic" : pace === "hyper" ? "fast, punchy and social-native" : pace === "dynamic" ? "energetic with frequent scene changes" : "balanced"}.`,
-    `Narration mode: ${mode}.`,
-  ];
-
-  if (mode === "per_scene") {
-    lines.push(
-      `- Output a flat "blocks" array. Each block has its own narrativeText and one visualPrompt.`,
-      `- Each block's durationSeconds MUST be between ${spec.visualMin} and ${spec.visualMax} seconds.`,
-      `- Aim for ~${estBlocks} blocks total for ${project.targetDurationSeconds}s.`,
-      `- narrativeText per block: roughly (durationSeconds * 2.5) words (≈150 wpm).`,
-    );
-  } else {
-    lines.push(
-      `- Output a flat "blocks" array where consecutive blocks may share a narrationGroupId (e.g. "n1", "n2").`,
-      `- Only the FIRST block in each narrationGroupId has narrativeText (8–14 seconds of voice-over when spoken).`,
-      `- Subsequent blocks in the same group have narrativeText as "" (empty) — visual cuts only.`,
-      `- Visual-cut durationSeconds MUST be between ${spec.continuousCutMin} and ${spec.continuousCutMax} seconds.`,
-      `- Each narration group needs ${spec.cutsPerUnitMin}–${spec.cutsPerUnitMax} visual cuts.`,
-      `- Aim for ~${estBlocks} total blocks (visual cuts) across ~${Math.ceil(estBlocks / ((spec.cutsPerUnitMin + spec.cutsPerUnitMax) / 2))} narration groups.`,
-      `- The group's visual cuts should vary angle, framing or micro-action while the narration plays continuously.`,
-    );
-  }
-
-  lines.push(
+    "Narration mode: continuous.",
+    `- Output a flat "blocks" array where consecutive blocks may share a narrationGroupId (e.g. "n1", "n2").`,
+    `- Only the FIRST block in each narrationGroupId has narrativeText (8–14 seconds of voice-over when spoken).`,
+    `- Subsequent blocks in the same group have narrativeText as "" (empty) — visual cuts only.`,
+    `- Visual-cut durationSeconds MUST be between ${spec.continuousCutMin} and ${spec.continuousCutMax} seconds.`,
+    `- Each narration group needs ${spec.cutsPerUnitMin}–${spec.cutsPerUnitMax} visual cuts.`,
+    `- Aim for ~${estBlocks} total blocks (visual cuts) across ~${Math.ceil(estBlocks / ((spec.cutsPerUnitMin + spec.cutsPerUnitMax) / 2))} narration groups.`,
+    `- The group's visual cuts should vary angle, framing or micro-action while the narration plays continuously.`,
     "- Total durationSeconds across all blocks must be within ±10% of target_total_duration_seconds.",
     "- Exactly one 'intro', one 'climax', one 'resolution' segmentType across the whole film (assign to narration leads in continuous mode).",
-  );
+  ];
 
   return lines;
 }
@@ -211,7 +181,7 @@ export function resolveNarrationPlayback(
   blocks: StoryBlock[],
   activeBlock: StoryBlock | null,
 ): NarrationPlayback | null {
-  if (!activeBlock) return null;
+  if (!activeBlock || isStoryBlockPause(activeBlock)) return null;
 
   const groupId = activeBlock.narrationGroupId?.trim();
   if (groupId) {

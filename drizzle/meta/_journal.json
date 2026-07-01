@@ -148,6 +148,34 @@
       "when": 1750350900000,
       "tag": "0021_script_versions",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "6",
+      "when": 1750351000000,
+      "tag": "0022_tts_voice_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1750351200000,
+      "tag": "0024_media_library",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1750351300000,
+      "tag": "0025_project_script_language",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1750351400000,
+      "tag": "0026_music_trim",
+      "breakpoints": true
     }
   ]
 }

@@ -9,6 +9,7 @@ import {
   buildScriptDeliveryUserPrompt,
 } from "@/lib/script-prompts";
 import { resolveProjectApiModels } from "@/lib/project-api-models";
+import { normalizeProjectScriptLanguage } from "@/lib/project-language";
 import {
   normalizeScriptDeliverySpans,
   normalizeScriptText,
@@ -53,9 +54,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   try {
     const models = resolveProjectApiModels(project);
+    const scriptLanguage = normalizeProjectScriptLanguage(project.scriptLanguage);
     const raw = await chatCompletion({
       messages: [
-        { role: "system", content: buildScriptDeliverySystemPrompt() },
+        { role: "system", content: buildScriptDeliverySystemPrompt(scriptLanguage) },
         {
           role: "user",
           content: buildScriptDeliveryUserPrompt({

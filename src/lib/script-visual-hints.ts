@@ -250,6 +250,8 @@ export function inferParagraphVisualHint(
   text: string,
   role?: ScriptSegmentRole,
 ): ScriptVisualHint | null {
+  if (role === "section") return null;
+
   const trimmed = text.trim();
   if (!trimmed) return null;
 

@@ -19,8 +19,10 @@ export type { ScriptVersionMeta } from "@/lib/script-studio";
 export type ScriptVersionSource =
   | "ai_generate"
   | "refine"
+  | "music_pauses"
   | "paste"
   | "manual_checkpoint"
+  | "autosave"
   | "restore"
   | "applied_snapshot"
   | "initial";
@@ -114,14 +116,26 @@ export async function saveScriptDraft(
   let versionCreated: number | null = null;
 
   if (text && input.versionSource) {
-    versionCreated = await createScriptVersion(project.id, {
-      script: text,
-      notes: mergedNotes,
-      source: input.versionSource,
-      summary: input.versionSummary,
-    });
-    currentVersion = versionCreated;
-    mergedNotes.revision = versionCreated;
+    let skipVersion = false;
+    if (input.versionSource === "autosave" && currentVersion !== null) {
+      const latest = await getScriptVersion(project.id, currentVersion);
+      if (
+        latest &&
+        normalizeScriptText(latest.script) === text
+      ) {
+        skipVersion = true;
+      }
+    }
+    if (!skipVersion) {
+      versionCreated = await createScriptVersion(project.id, {
+        script: text,
+        notes: mergedNotes,
+        source: input.versionSource,
+        summary: input.versionSummary,
+      });
+      currentVersion = versionCreated;
+      mergedNotes.revision = versionCreated;
+    }
   } else if (text && currentVersion === null) {
     // Backfill v1 for drafts that predate versioning.
     versionCreated = await createScriptVersion(project.id, {

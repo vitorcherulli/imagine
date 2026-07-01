@@ -2,18 +2,21 @@ import { OPENROUTER_MODELS, openRouterFetch } from "./client";
 import { adjustSpeechSpeed } from "../ffmpeg";
 import { normalizeTtsSpeed } from "../narration-speed";
 import {
+  elevenLabsModelIdFromSlug,
+  generateElevenLabsSpeech,
+  isElevenLabsConfigured,
+} from "../elevenlabs/tts";
+import type { ElevenLabsVoiceSettings, KokoroExpressiveness } from "../elevenlabs-voice-settings";
+import type { ScriptDeliverySpan } from "../script-studio";
+import {
+  DEFAULT_ELEVENLABS_VOICE,
   DEFAULT_GEMINI_TTS_VOICE,
   DEFAULT_GROK_TTS_VOICE,
-  DEFAULT_ELEVENLABS_VOICE,
+  ELEVENLABS_MULTILINGUAL_MODEL,
   isElevenLabsTtsModel,
   isGeminiTtsModel,
   isGrokTtsModel,
 } from "../project-api-models";
-import {
-  elevenLabsModelIdFromSlug,
-  generateElevenLabsSpeech,
-} from "../elevenlabs/tts";
-import type { ScriptDeliverySpan } from "../script-studio";
 import {
   buildTtsDeliveryNotes,
   formatGeminiDeliverySpanBlock,
@@ -35,6 +38,10 @@ export interface TtsInput {
   deliveryNotes?: string;
   /** AI delivery spans from Analyze delivery — applied per speech segment. */
   deliverySpans?: ScriptDeliverySpan[];
+  /** ElevenLabs voice_settings (stability, similarity, style, speaker boost). */
+  elevenLabsSettings?: Partial<ElevenLabsVoiceSettings>;
+  /** Kokoro has no native emotion — pauses + pacing via delivery spans. */
+  kokoroExpressiveness?: KokoroExpressiveness;
 }
 
 function deliverySpeedBias(notes?: string): number {
@@ -134,7 +141,29 @@ export function shouldFallbackFromGemini(message: string): boolean {
   return isTtsSafetyError(message);
 }
 
+function isOpenRouterAuthError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("user not found") ||
+    lower.includes("invalid credentials") ||
+    lower.includes("invalid api key") ||
+    lower.includes("key expired") ||
+    lower.includes("openrouter_api_key is not set")
+  );
+}
+
+export function formatOpenRouterAuthHelp(raw: string): string {
+  if (!isOpenRouterAuthError(raw)) return raw;
+  return (
+    "OpenRouter rejeitou a API key (401 — “User not found”). " +
+    "Isso quase sempre significa chave inválida, expirada ou revogada — não que sua conta sumiu. " +
+    "Gere uma nova em openrouter.ai/settings/keys, atualize OPENROUTER_API_KEY no .env.local e reinicie o servidor. " +
+    "Alternativa: use ElevenLabs (Voice API nas configurações do projeto) com ELEVENLABS_API_KEY no .env.local."
+  );
+}
+
 export function formatTtsUserError(raw: string, model: string): string {
+  if (isOpenRouterAuthError(raw)) return formatOpenRouterAuthHelp(raw);
   if (!isTtsSafetyError(raw)) return raw;
   if (isGeminiTtsModel(model)) {
     return (
@@ -148,7 +177,11 @@ export function formatTtsUserError(raw: string, model: string): string {
 
 function parseTtsErrorBody(status: number, body: string): string {
   const core = extractErrorMessage(body);
-  return core.includes("OpenRouter TTS error") ? core : `OpenRouter TTS error ${status}: ${core}`;
+  const message = core.includes("OpenRouter TTS error") ? core : `OpenRouter TTS error ${status}: ${core}`;
+  if (status === 401 || isOpenRouterAuthError(message)) {
+    return formatOpenRouterAuthHelp(message);
+  }
+  return message;
 }
 
 async function requestSpeechOnce(input: {
@@ -159,6 +192,7 @@ async function requestSpeechOnce(input: {
   speed?: number;
   deliveryNotes?: string;
   deliverySpans?: ScriptDeliverySpan[];
+  kokoroExpressiveness?: KokoroExpressiveness;
 }): Promise<{ buffer: Buffer; filename: string }> {
   const gemini = isGeminiTtsModel(input.model);
   const spokenText = prepareSpeechTextForTts({
@@ -167,6 +201,7 @@ async function requestSpeechOnce(input: {
     ttsModel: input.model,
     isGemini: gemini,
     isElevenLabs: false,
+    kokoroExpressiveness: input.kokoroExpressiveness,
   });
   const ttsText = gemini
     ? formatGeminiTtsInput(spokenText, input.deliveryNotes, input.deliverySpans)
@@ -224,6 +259,12 @@ async function requestSpeechOnce(input: {
   return { buffer, filename: "audio.mp3" };
 }
 
+function kokoroExpressivenessSpeedBias(level?: KokoroExpressiveness): number {
+  if (level === "expressive") return -0.06;
+  if (level === "subtle") return 0.05;
+  return 0;
+}
+
 export async function generateSpeech(input: TtsInput): Promise<SpeechResult> {
   const primaryModel = input.model ?? OPENROUTER_MODELS.tts;
   const gemini = isGeminiTtsModel(primaryModel);
@@ -240,7 +281,11 @@ export async function generateSpeech(input: TtsInput): Promise<SpeechResult> {
           : pickVoiceForTone(input.voiceTone ?? ""));
   const format = input.format ?? (gemini ? "pcm" : "mp3");
   const speed = normalizeTtsSpeed(
-    (input.speed ?? 1) + deliverySpeedBias(input.deliveryNotes),
+    (input.speed ?? 1) +
+      deliverySpeedBias(input.deliveryNotes) +
+      (!elevenlabs && !gemini && !grok
+        ? kokoroExpressivenessSpeedBias(input.kokoroExpressiveness)
+        : 0),
   );
   const deliveryNotes = buildTtsDeliveryNotes(
     input.deliveryNotes,
@@ -252,6 +297,7 @@ export async function generateSpeech(input: TtsInput): Promise<SpeechResult> {
     ttsModel: primaryModel,
     isGemini: gemini,
     isElevenLabs: elevenlabs,
+    kokoroExpressiveness: input.kokoroExpressiveness,
   });
   console.info(
     `[tts] model=${primaryModel} voice=${voice} format=${format} speed=${speed} deliverySpans=${input.deliverySpans?.length ?? 0}`,
@@ -262,15 +308,27 @@ export async function generateSpeech(input: TtsInput): Promise<SpeechResult> {
     return { ...adjusted, modelUsed, usedFallback };
   }
 
+  async function synthesizeElevenLabs(modelSlug = ELEVENLABS_MULTILINGUAL_MODEL): Promise<{
+    buffer: Buffer;
+    filename: string;
+  }> {
+    const elVoice =
+      isElevenLabsTtsModel(primaryModel) && voice
+        ? voice
+        : pickElevenLabsVoiceForTone(input.voiceTone ?? "");
+    return generateElevenLabsSpeech({
+      text: spokenText,
+      voiceId: elVoice,
+      modelId: elevenLabsModelIdFromSlug(modelSlug),
+      speed,
+      voiceSettings: input.elevenLabsSettings,
+      useSsml: Boolean(input.deliverySpans?.length),
+    });
+  }
+
   async function synthesize(): Promise<{ buffer: Buffer; filename: string }> {
     if (elevenlabs) {
-      return generateElevenLabsSpeech({
-        text: spokenText,
-        voiceId: voice,
-        modelId: elevenLabsModelIdFromSlug(primaryModel),
-        speed,
-        useSsml: Boolean(input.deliverySpans?.length),
-      });
+      return synthesizeElevenLabs(primaryModel);
     }
     return requestSpeechOnce({
       text: input.text,
@@ -280,6 +338,7 @@ export async function generateSpeech(input: TtsInput): Promise<SpeechResult> {
       speed: speed !== 1 ? speed : undefined,
       deliveryNotes,
       deliverySpans: input.deliverySpans,
+      kokoroExpressiveness: input.kokoroExpressiveness,
     });
   }
 
@@ -288,13 +347,29 @@ export async function generateSpeech(input: TtsInput): Promise<SpeechResult> {
     return finish(result, primaryModel);
   } catch (err) {
     const raw = err instanceof Error ? err.message : String(err);
+    const authFailure = isOpenRouterAuthError(raw);
+
+    // OpenRouter key dead — skip Kokoro (same API) and use ElevenLabs when configured.
+    if (authFailure && isElevenLabsConfigured() && !elevenlabs) {
+      try {
+        const result = await synthesizeElevenLabs();
+        console.warn(
+          `[tts] OpenRouter auth failed — used ElevenLabs fallback. Original: ${raw.slice(0, 120)}`,
+        );
+        return finish(result, ELEVENLABS_MULTILINGUAL_MODEL, true);
+      } catch (elErr) {
+        const elRaw = elErr instanceof Error ? elErr.message : String(elErr);
+        throw new Error(`${formatOpenRouterAuthHelp(raw)} ElevenLabs fallback also failed: ${elRaw}`);
+      }
+    }
+
     const canFallback =
       (isGeminiTtsModel(primaryModel) ||
         isGrokTtsModel(primaryModel) ||
         isElevenLabsTtsModel(primaryModel)) &&
       primaryModel !== KOKORO_TTS_MODEL;
 
-    if (canFallback) {
+    if (canFallback && !authFailure) {
       try {
         const fallbackVoice = pickVoiceForTone(input.voiceTone ?? "warm");
         const result = await requestSpeechOnce({
@@ -305,21 +380,40 @@ export async function generateSpeech(input: TtsInput): Promise<SpeechResult> {
           speed: input.speed,
           deliveryNotes,
           deliverySpans: input.deliverySpans,
+          kokoroExpressiveness: input.kokoroExpressiveness ?? "expressive",
         });
         console.warn(
-          `[tts] Gemini blocked/failed — used Kokoro fallback. Original: ${raw.slice(0, 160)}`,
+          `[tts] Primary TTS failed — used Kokoro fallback. Original: ${raw.slice(0, 160)}`,
         );
-        return finish(
-          result,
-          KOKORO_TTS_MODEL,
-          true,
-        );
+        return finish(result, KOKORO_TTS_MODEL, true);
       } catch (fallbackErr) {
         const fallbackRaw =
           fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
+        if (isElevenLabsConfigured() && !elevenlabs) {
+          try {
+            const result = await synthesizeElevenLabs();
+            console.warn(`[tts] Kokoro failed — used ElevenLabs fallback.`);
+            return finish(result, ELEVENLABS_MULTILINGUAL_MODEL, true);
+          } catch (elErr) {
+            const elRaw = elErr instanceof Error ? elErr.message : String(elErr);
+            throw new Error(
+              `${formatTtsUserError(raw, primaryModel)} Kokoro fallback also failed: ${fallbackRaw}. ElevenLabs: ${elRaw}`,
+            );
+          }
+        }
         throw new Error(
           `${formatTtsUserError(raw, primaryModel)} Kokoro fallback also failed: ${fallbackRaw}`,
         );
+      }
+    }
+
+    if (isElevenLabsConfigured() && !elevenlabs) {
+      try {
+        const result = await synthesizeElevenLabs();
+        console.warn(`[tts] Used ElevenLabs fallback after: ${raw.slice(0, 120)}`);
+        return finish(result, ELEVENLABS_MULTILINGUAL_MODEL, true);
+      } catch {
+        // fall through to formatted primary error
       }
     }
 

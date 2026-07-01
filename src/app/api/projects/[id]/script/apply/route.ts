@@ -17,21 +17,34 @@ import {
   resolveProjectAvatar,
 } from "@/lib/avatar-block";
 import { resolveProjectIdentityForProject } from "@/lib/project-dna-server";
+import { normalizeProjectScriptLanguage } from "@/lib/project-language";
 import {
   clampContinuousCutDuration,
   clampVisualDuration,
 } from "@/lib/cut-pace";
 import {
-  generateAndSaveAnchor,
   generateAndSaveStyleBible,
   normalizeLocationTag,
 } from "@/lib/style-bible-server";
+import { buildDeterministicApplyBlocks, hasImportedReferenceImages } from "@/lib/script-apply-blocks";
+import { inheritPauseBlockVisualFields, isStoryBlockPause } from "@/lib/script-pause";
+import { promoteScriptReferenceVideoToBlock } from "@/lib/stock-video-import-server";
 import {
   buildFallbackBlocksFromScript,
+  importedMediaForSpeechIndex,
+  importedMediaForPauseIndex,
   normalizeScriptText,
   parseScriptDraftNotes,
   splitScriptIntoParagraphs,
 } from "@/lib/script-studio";
+import {
+  narrationClipForSpeechIndex,
+  pauseIndexFromNarrationGroupId,
+  scriptParagraphTextKey,
+  speechIndexFromNarrationGroupId,
+} from "@/lib/script-narration-utils";
+import type { StoryBlock } from "@/lib/db/schema";
+import { withCacheBuster } from "@/lib/storage";
 import { createScriptVersion, saveScriptDraft } from "@/lib/script-versions-server";
 
 export const dynamic = "force-dynamic";
@@ -146,37 +159,67 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
     const resolvedIdentity = await resolveProjectIdentityForProject(project);
 
-    const raw = await chatCompletion({
-      messages: [
-        {
-          role: "system",
-          content: buildScriptApplySystemPrompt(projectAvatar?.name ?? null),
-        },
-        {
-          role: "user",
-          content: buildScriptApplyUserPrompt({
-            project,
-            approvedScript,
-            resolvedIdentity: resolvedIdentity || undefined,
-            primaryCharacter: projectAvatar
-              ? { name: projectAvatar.name, description: projectAvatar.description }
-              : null,
-          }),
-        },
-      ],
-      model: models.llmModel,
-      temperature: 0.6,
-      response_format: { type: "json_object" },
-    });
+    const narrationNotes = parseScriptDraftNotes(projectRow.scriptDraftNotes);
+    const referenceImagesByParagraph = (narrationNotes.paragraphImages ?? [])
+      .map((entry) => {
+        if (entry.pauseIndex !== undefined || entry.speechIndex === undefined) return null;
+        const imported = entry.keywords.filter((kw) => Boolean(kw.importedUrl?.trim()));
+        if (imported.length === 0) return null;
+        return {
+          narrationGroupId: `n${entry.speechIndex + 1}`,
+          keywords: imported.map((kw) => kw.keyword),
+          imageCount: imported.length,
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null);
 
-    const llmJson = extractJson<{ blocks?: unknown }>(raw);
-    let blocks = validateBlocks(llmJson.blocks);
+    const paragraphClips = narrationNotes.paragraphNarration ?? [];
+    const useImportedImages = hasImportedReferenceImages(narrationNotes);
 
-    // Fallback: if LLM did not return usable blocks, build a minimal continuous
-    // storyboard directly from paragraphs (one narration group per paragraph,
-    // no extra visual cuts). This guarantees the user can always proceed.
-    if (blocks.length === 0) {
-      blocks = buildFallbackBlocksFromScript(approvedScript);
+    let blocks: ScriptApplyBlock[];
+    if (useImportedImages) {
+      // Deterministic: one narration group per script paragraph, N visual cuts per imported photo.
+      blocks = buildDeterministicApplyBlocks(
+        approvedScript,
+        narrationNotes,
+        project.cutPace,
+        paragraphClips,
+      );
+    } else {
+      const raw = await chatCompletion({
+        messages: [
+          {
+            role: "system",
+            content: buildScriptApplySystemPrompt(
+              projectAvatar?.name ?? null,
+              normalizeProjectScriptLanguage(project.scriptLanguage),
+            ),
+          },
+          {
+            role: "user",
+            content: buildScriptApplyUserPrompt({
+              project,
+              approvedScript,
+              resolvedIdentity: resolvedIdentity || undefined,
+              primaryCharacter: projectAvatar
+                ? { name: projectAvatar.name, description: projectAvatar.description }
+                : null,
+              referenceImagesByParagraph:
+                referenceImagesByParagraph.length > 0 ? referenceImagesByParagraph : undefined,
+            }),
+          },
+        ],
+        model: models.llmModel,
+        temperature: 0.6,
+        response_format: { type: "json_object" },
+      });
+
+      const llmJson = extractJson<{ blocks?: unknown }>(raw);
+      blocks = validateBlocks(llmJson.blocks);
+
+      if (blocks.length === 0) {
+        blocks = buildFallbackBlocksFromScript(approvedScript);
+      }
     }
 
     // Wipe existing story blocks, write new continuous ones.
@@ -191,35 +234,172 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         groupOrder.set(b.narrationGroupId, groupOrder.size);
       }
     }
+
+    const blocksPerGroup = new Map<string, number>();
+    for (const b of blocks) {
+      blocksPerGroup.set(b.narrationGroupId, (blocksPerGroup.get(b.narrationGroupId) ?? 0) + 1);
+    }
+
     const groupLeadSeen = new Set<string>();
-    const rows = blocks.map((b, i) => {
+    const groupVisualIndex = new Map<string, number>();
+    let lastVisualSource: Parameters<typeof inheritPauseBlockVisualFields>[0] = null;
+    const rows: Array<typeof schema.storyBlocks.$inferInsert> = [];
+
+    for (let i = 0; i < blocks.length; i += 1) {
+      const b = blocks[i]!;
       const isLead = !groupLeadSeen.has(b.narrationGroupId) && b.narrativeText.trim().length > 0;
       if (isLead) groupLeadSeen.add(b.narrationGroupId);
-      const duration = isLead
+
+      let duration = isLead
         ? clampVisualDuration(b.durationSeconds, project.cutPace)
         : clampContinuousCutDuration(b.durationSeconds, project.cutPace);
+
+      let audioUrl: string | null = null;
+      let keyframeUrl: string | null = null;
+      let blockStatus: StoryBlock["status"] = "draft";
+      let pendingVideoSource: string | null = null;
+
+      if (isLead && b.narrativeText.trim()) {
+        const speechIdx = speechIndexFromNarrationGroupId(b.narrationGroupId);
+        if (speechIdx !== null) {
+          const clip = narrationClipForSpeechIndex(
+            paragraphClips,
+            speechIdx,
+            scriptParagraphTextKey(b.narrativeText),
+          );
+          if (clip) {
+            audioUrl = withCacheBuster(clip.audioUrl);
+            const groupSize = blocksPerGroup.get(b.narrationGroupId) ?? 1;
+            if (groupSize <= 1) {
+              duration = clampVisualDuration(
+                Math.max(duration, Math.ceil(clip.durationSeconds)),
+                project.cutPace,
+              );
+            }
+            blockStatus = "audio_ready";
+          }
+        }
+      }
+
+      const speechIdx = speechIndexFromNarrationGroupId(b.narrationGroupId);
+      if (speechIdx !== null) {
+        const mediaItems = importedMediaForSpeechIndex(narrationNotes, speechIdx);
+        if (mediaItems.length > 0) {
+          const visualIdx = groupVisualIndex.get(b.narrationGroupId) ?? 0;
+          groupVisualIndex.set(b.narrationGroupId, visualIdx + 1);
+          if (visualIdx < mediaItems.length) {
+            const item = mediaItems[visualIdx]!;
+            if (item.mediaKind === "video") {
+              pendingVideoSource = item.url;
+            } else {
+              keyframeUrl = withCacheBuster(item.url);
+              blockStatus = blockStatus === "audio_ready" ? blockStatus : "image_ready";
+            }
+          }
+        }
+      }
+
+      const pauseIdx = pauseIndexFromNarrationGroupId(b.narrationGroupId);
+      if (pauseIdx !== null) {
+        const pauseMedia = importedMediaForPauseIndex(narrationNotes, pauseIdx);
+        if (pauseMedia.length > 0) {
+          const item = pauseMedia[0]!;
+          if (item.mediaKind === "video") {
+            pendingVideoSource = item.url;
+            keyframeUrl = null;
+          } else {
+            keyframeUrl = withCacheBuster(item.url);
+            pendingVideoSource = null;
+            blockStatus = "image_ready";
+          }
+        }
+      }
+
       const { avatarId, characterName } = assignBlockAvatarFromStory(
         b.characterName,
         projectAvatar,
-        cast.length > 0 ? cast : userAvatars,
+        cast,
       );
-      return {
-        id: createId(),
+
+      let finalKeyframeUrl = keyframeUrl;
+      let finalVideoUrl: string | null = null;
+      let finalSceneAudioUrl: string | null = null;
+      let finalLocationTag = normalizeLocationTag(b.locationTag);
+      let finalStatus: StoryBlock["status"] = blockStatus;
+
+      const blockId = createId();
+
+      if (pendingVideoSource) {
+        try {
+          const promoted = await promoteScriptReferenceVideoToBlock({
+            projectId: project.id,
+            blockId,
+            sourceVideoUrl: pendingVideoSource,
+            durationSeconds: duration,
+            previewMode: project.previewMode,
+            userId,
+          });
+          finalVideoUrl = promoted.videoUrl;
+          finalSceneAudioUrl = promoted.sceneAudioUrl;
+          finalStatus = audioUrl ? "ready" : "video_ready";
+        } catch (err) {
+          return NextResponse.json(
+            {
+              error:
+                err instanceof Error
+                  ? err.message
+                  : "Could not prepare imported stock video for timeline.",
+            },
+            { status: 500 },
+          );
+        }
+      }
+
+      if (isStoryBlockPause({ narrationGroupId: b.narrationGroupId, narrativeText: b.narrativeText })) {
+        if (!keyframeUrl && !pendingVideoSource) {
+          const inherited = inheritPauseBlockVisualFields(lastVisualSource);
+          finalKeyframeUrl = inherited.keyframeUrl;
+          finalVideoUrl = inherited.videoUrl;
+          finalLocationTag = inherited.locationTag ?? finalLocationTag;
+          finalStatus = inherited.status ?? finalStatus;
+        }
+      }
+
+      const row = {
+        id: blockId,
         projectId: project.id,
         position: i,
         segmentType: b.segmentType,
         narrativeText: isLead ? b.narrativeText : "",
         visualPrompt: b.visualPrompt,
-        locationTag: normalizeLocationTag(b.locationTag),
+        locationTag: finalLocationTag,
         durationSeconds: duration,
         narrationGroupId: b.narrationGroupId,
+        audioUrl,
+        keyframeUrl: finalKeyframeUrl,
+        videoUrl: finalVideoUrl,
+        sceneAudioUrl: finalSceneAudioUrl,
         avatarId,
         characterName,
-        status: "draft" as const,
+        status: finalStatus,
         createdAt: now,
         updatedAt: now,
       };
-    });
+
+      if (finalKeyframeUrl || finalVideoUrl) {
+        lastVisualSource = {
+          id: row.id,
+          keyframeUrl: finalKeyframeUrl,
+          videoUrl: finalVideoUrl,
+          videoJobId: null,
+          videoPollingUrl: null,
+          locationTag: finalLocationTag,
+          status: finalStatus,
+        };
+      }
+
+      rows.push(row);
+    }
 
     if (rows.length === 0) {
       return NextResponse.json(
@@ -229,6 +409,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     }
 
     await db.insert(schema.storyBlocks).values(rows);
+
+    const narrationClipsAttached = rows.filter(
+      (r) => r.audioUrl && r.narrativeText.trim().length > 0,
+    ).length;
 
     const notes = parseScriptDraftNotes(projectRow.scriptDraftNotes);
     const appliedVersion = await createScriptVersion(project.id, {
@@ -255,7 +439,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       .set(projectPatch)
       .where(eq(schema.projects.id, project.id));
 
-    // Best-effort: editorial style line + abstract anchor (same as story route).
+    // Best-effort: editorial line text only (block images in Style dialog).
     let styleBibleError: string | null = null;
     try {
       const fresh = await db
@@ -264,11 +448,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         .where(eq(schema.projects.id, project.id))
         .limit(1);
       if (fresh[0]) {
-        const bible = await generateAndSaveStyleBible(fresh[0]);
-        await generateAndSaveAnchor(
-          { ...fresh[0], styleBible: JSON.stringify(bible) },
-          bible,
-        );
+        await generateAndSaveStyleBible(fresh[0]);
       }
     } catch (e) {
       styleBibleError = e instanceof Error ? e.message : String(e);
@@ -279,6 +459,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       ok: true,
       blocks: rows,
       narrationMode: "continuous",
+      narrationClipsAttached,
       styleBibleError,
     });
   } catch (err) {

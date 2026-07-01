@@ -2,16 +2,9 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Download, Loader2, ArrowLeft, UserSquare, Settings2, ImageIcon } from "lucide-react";
+import { Loader2, ArrowLeft, UserSquare, ImageIcon, Cog, Dna } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -20,7 +13,9 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { ProjectApiSettings, apiModelsSummary } from "@/components/ProjectApiSettings";
+import { ProjectApiToolbar } from "@/components/ProjectApiToolbar";
+import { OpenRouterUsageBadge } from "@/components/OpenRouterUsageBadge";
+import { apiModelsSummary } from "@/components/ProjectApiSettings";
 import { StyleBibleDialog } from "@/components/StyleBibleDialog";
 import {
   AvatarCastPicker,
@@ -30,25 +25,26 @@ import {
 import { projectApiModelsFromProject, type ProjectApiModels } from "@/lib/project-api-models";
 import { getVideoFormatSpec } from "@/lib/video-format";
 import type { Avatar, Project } from "@/lib/db/schema";
-import type { StyleBible } from "@/lib/style-bible";
+import type { StyleBible, StyleBibleBlockImages } from "@/lib/style-bible";
 import { ExportHistoryDialog } from "@/components/ExportHistoryDialog";
+import { formatOpenRouterUsd } from "@/lib/openrouter/usage";
 import type { ProjectExportItem } from "@/lib/export-history";
-
-const EXPORT_RESOLUTION_OPTIONS = [
-  { id: "720p", label: "HD 720p" },
-  { id: "1080p", label: "Full HD 1080p" },
-  { id: "1440p", label: "QHD 1440p" },
-  { id: "2160p", label: "4K 2160p" },
-] as const;
-
-export type ExportResolutionId = (typeof EXPORT_RESOLUTION_OPTIONS)[number]["id"];
+import type { ExportResolutionId } from "@/lib/export-resolutions";
+import type { ExportQualityId } from "@/lib/export-quality";
+import type { ExportProgressUiState } from "@/components/ExportProgressPanel";
 
 interface Props {
   project: Project;
-  onExport: (resolution: ExportResolutionId) => Promise<void>;
+  onExport: (resolution: ExportResolutionId, quality: ExportQualityId) => Promise<void>;
+  onExportPremiere?: () => Promise<void>;
   canExport: boolean;
+  canExportPremiere?: boolean;
+  exportPremiereBlockerReason?: string | null;
+  exportingPremiere?: boolean;
   exportBlockerReason?: string | null;
+  exportVisualNote?: string | null;
   exporting: boolean;
+  exportProgress?: ExportProgressUiState | null;
   projectExports: ProjectExportItem[];
   onRefreshExports: () => Promise<void>;
   exportsRefreshing?: boolean;
@@ -58,16 +54,28 @@ interface Props {
   onApiModelsChange?: (models: ProjectApiModels) => void | Promise<void>;
   onStyleBibleUpdated?: (next: {
     styleBible: StyleBible | null;
-    anchorImageUrl: string | null;
+    blockImages?: StyleBibleBlockImages;
+    anchorImageUrl?: string | null;
   }) => void;
+  onOpenSettings?: () => void;
+  onEnrichDna?: () => void;
+  canEnrichDna?: boolean;
+  /** Sum of recorded OpenRouter video costs on timeline blocks. */
+  projectOpenRouterCostUsd?: number;
 }
 
 export function ProjectHeader({
   project,
   onExport,
+  onExportPremiere,
   canExport,
+  canExportPremiere = false,
+  exportPremiereBlockerReason,
+  exportingPremiere = false,
   exportBlockerReason,
+  exportVisualNote,
   exporting,
+  exportProgress = null,
   projectExports,
   onRefreshExports,
   exportsRefreshing,
@@ -76,16 +84,17 @@ export function ProjectHeader({
   onAvatarCastChange,
   onApiModelsChange,
   onStyleBibleUpdated,
+  onOpenSettings,
+  onEnrichDna,
+  canEnrichDna = false,
+  projectOpenRouterCostUsd = 0,
 }: Props) {
-  const [apiOpen, setApiOpen] = React.useState(false);
   const [castOpen, setCastOpen] = React.useState(false);
   const [draftCast, setDraftCast] = React.useState<AvatarCastValue>(avatarCast);
   const [savingCast, setSavingCast] = React.useState(false);
   const [apiModels, setApiModels] = React.useState<ProjectApiModels>(() =>
     projectApiModelsFromProject(project),
   );
-  const [savingApi, setSavingApi] = React.useState(false);
-  const [exportResolution, setExportResolution] = React.useState<ExportResolutionId>("1080p");
 
   React.useEffect(() => {
     setApiModels(projectApiModelsFromProject(project));
@@ -105,18 +114,10 @@ export function ProjectHeader({
     }
   }
 
-  async function saveApiModels() {
-    if (!onApiModelsChange) {
-      setApiOpen(false);
-      return;
-    }
-    setSavingApi(true);
-    try {
-      await onApiModelsChange(apiModels);
-      setApiOpen(false);
-    } finally {
-      setSavingApi(false);
-    }
+  async function saveApiModels(next: ProjectApiModels) {
+    if (!onApiModelsChange) return;
+    setApiModels(next);
+    await onApiModelsChange(next);
   }
 
   const formatSpec = getVideoFormatSpec(project.videoFormat);
@@ -158,36 +159,42 @@ export function ProjectHeader({
         onUpdated={onStyleBibleUpdated}
       />
 
-      <Dialog open={apiOpen} onOpenChange={setApiOpen}>
-        <DialogTrigger asChild>
-          <Button variant="outline" size="sm" title="Project API models">
-            <Settings2 className="h-3.5 w-3.5" />
-            APIs
-          </Button>
-        </DialogTrigger>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>API models</DialogTitle>
-            <DialogDescription>
-              Models used for story, images, video and voice in this project.
-            </DialogDescription>
-          </DialogHeader>
-          <ProjectApiSettings
-            variant="dialog"
-            value={apiModels}
-            onChange={(patch) => setApiModels((prev) => ({ ...prev, ...patch }))}
-          />
-          <div className="flex justify-end gap-2 pt-1">
-            <Button variant="ghost" size="sm" onClick={() => setApiOpen(false)}>
-              Cancel
-            </Button>
-            <Button variant="primary" size="sm" onClick={saveApiModels} disabled={savingApi}>
-              {savingApi && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              Save
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {canEnrichDna && onEnrichDna ? (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onEnrichDna}
+          title="Update series DNA from this episode"
+        >
+          <Dna className="h-3.5 w-3.5" />
+          Enrich DNA
+        </Button>
+      ) : null}
+
+      <OpenRouterUsageBadge />
+
+      {projectOpenRouterCostUsd > 0 ? (
+        <span
+          className="hidden shrink-0 text-[10px] tabular-nums text-muted-foreground sm:inline"
+          title="Soma dos clips de vídeo gerados via OpenRouter neste projeto"
+        >
+          projeto {formatOpenRouterUsd(projectOpenRouterCostUsd)}
+        </span>
+      ) : null}
+
+      <ProjectApiToolbar value={apiModels} onSave={saveApiModels} />
+
+      {onOpenSettings && (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onOpenSettings}
+          title="Format, captions, cut pace and brief"
+        >
+          <Cog className="h-3.5 w-3.5" />
+          Settings
+        </Button>
+      )}
 
       <Dialog open={castOpen} onOpenChange={setCastOpen}>
         <DialogTrigger asChild>
@@ -213,12 +220,7 @@ export function ProjectHeader({
               Select who appears in this video. The star marks the main character.
             </DialogDescription>
           </DialogHeader>
-          <AvatarCastPicker
-            avatars={avatars}
-            value={draftCast}
-            onChange={setDraftCast}
-            variant="compact"
-          />
+          <AvatarCastPicker avatars={avatars} value={draftCast} onChange={setDraftCast} />
           <div className="flex justify-end gap-2 pt-1">
             <Button variant="ghost" size="sm" onClick={() => setCastOpen(false)}>
               Cancel
@@ -244,6 +246,16 @@ export function ProjectHeader({
         exports={projectExports}
         onRefresh={onRefreshExports}
         refreshing={exportsRefreshing}
+        canExport={canExport}
+        canExportPremiere={canExportPremiere}
+        exportBlockerReason={exportBlockerReason}
+        exportPremiereBlockerReason={exportPremiereBlockerReason}
+        exportVisualNote={exportVisualNote}
+        exporting={exporting}
+        exportingPremiere={exportingPremiere}
+        exportProgress={exportProgress}
+        onExport={onExport}
+        onExportPremiere={onExportPremiere}
       />
 
       <Link href={`/projects/${project.id}/youtube`}>
@@ -252,42 +264,6 @@ export function ProjectHeader({
           {formatSpec.id === "vertical" ? "Reels cover" : "Thumbnail"}
         </Button>
       </Link>
-
-      <div className="flex items-center gap-1">
-        <Select
-          value={exportResolution}
-          onValueChange={(v) => setExportResolution(v as ExportResolutionId)}
-        >
-          <SelectTrigger className="h-8 w-32 text-xs" title="Export resolution">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {EXPORT_RESOLUTION_OPTIONS.map((o) => (
-              <SelectItem key={o.id} value={o.id}>
-                {o.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={() => onExport(exportResolution)}
-          disabled={!canExport || exporting}
-          title={
-            canExport
-              ? "Export project as MP4"
-              : exportBlockerReason ?? "Generate video for every block first"
-          }
-        >
-          {exporting ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Download className="h-3.5 w-3.5" />
-          )}
-          Export
-        </Button>
-      </div>
     </header>
   );
 }

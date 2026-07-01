@@ -7,9 +7,20 @@ import {
   generateBlockVideo,
   probeAudioDurationSeconds,
 } from "@/lib/block-video";
-import { saveBuffer, withCacheBuster } from "@/lib/storage";
+import { saveBuffer, withCacheBuster, deleteMediaByPublicUrl } from "@/lib/storage";
 import { resolveProjectApiModels } from "@/lib/project-api-models";
 import { parseTtsSpeedFromRequest } from "@/lib/narration-speed-server";
+import { resolveElevenLabsVoiceSettings, resolveKokoroVoiceSettings } from "@/lib/elevenlabs-voice-settings";
+import {
+  mediaUrlForField,
+  patchAfterClearingMedia,
+  type BlockMediaField,
+} from "@/lib/block-media";
+import { z } from "zod";
+
+const clearMediaSchema = z.object({
+  field: z.enum(["keyframe", "video", "audio", "sceneAudio"]),
+});
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 900;
@@ -49,6 +60,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         model: models.ttsModel,
         voiceTone: owned.project.voiceTone,
         speed: ttsSpeed,
+        elevenLabsSettings: resolveElevenLabsVoiceSettings(owned.project.ttsVoiceSettings),
+        kokoroExpressiveness: resolveKokoroVoiceSettings(owned.project.ttsVoiceSettings)
+          .expressiveness,
       });
       const audioUrl = await saveBuffer(projectId, blockId, speech.filename, speech.buffer);
       const probed = await probeAudioDurationSeconds(audioUrl);
@@ -63,7 +77,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         audioUrl,
         durationSeconds,
       };
-      const { videoUrl, sceneAudioUrl } = await generateBlockVideo({
+      const { videoUrl, sceneAudioUrl, openRouterCostUsd } = await generateBlockVideo({
         project: owned.project,
         block: blockForVideo,
       });
@@ -72,6 +86,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         videoUrl,
         sceneAudioUrl,
         durationSeconds,
+        openRouterCostUsd,
         status: "ready",
       });
     } catch (err) {
@@ -83,4 +98,34 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   })();
 
   return NextResponse.json({ ok: true, status: "generating" });
+}
+
+export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+  const userId = await tryUser();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const owned = await getBlockForUser(params.id, userId);
+  if (!owned) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  const body = await req.json().catch(() => ({}));
+  const parsed = clearMediaSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: "Invalid field" }, { status: 400 });
+  }
+
+  const field = parsed.data.field as BlockMediaField;
+  const mediaUrl = mediaUrlForField(owned.block, field);
+  if (!mediaUrl) {
+    return NextResponse.json({ error: "Nothing to remove for this block." }, { status: 400 });
+  }
+
+  if (field === "video" && owned.block.sceneAudioUrl) {
+    await deleteMediaByPublicUrl(owned.block.sceneAudioUrl);
+  }
+  await deleteMediaByPublicUrl(mediaUrl);
+
+  const patch = patchAfterClearingMedia(owned.block, field);
+  await setBlockStatus(params.id, patch);
+
+  return NextResponse.json({ ok: true, field, patch });
 }

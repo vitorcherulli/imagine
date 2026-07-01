@@ -1,3 +1,4 @@
+import type { ProjectScriptLanguage } from "./project-language";
 import type { VideoFormat } from "./video-format";
 import { isVideoFormat } from "./video-format";
 
@@ -7,6 +8,7 @@ export interface ProjectFormPreferences {
   projectIdentity?: string;
   cutPace?: string;
   narrationMode?: string;
+  scriptLanguage?: ProjectScriptLanguage;
   genre?: string;
   visualStyle?: string;
   voiceTone?: string;

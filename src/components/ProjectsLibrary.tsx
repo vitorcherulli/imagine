@@ -35,6 +35,8 @@ import {
 } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/use-toast";
 import { getVideoFormatSpec } from "@/lib/video-format";
+import { getSocialAspectRatioSpec } from "@/lib/social-aspect-ratio";
+import { isSocialProject, projectEditorHref } from "@/lib/social-content";
 import { cn } from "@/lib/utils";
 import { ImageIcon } from "lucide-react";
 
@@ -148,7 +150,7 @@ export function ProjectsLibrary({
       const res = await fetch(`/api/projects/${projectId}/duplicate`, { method: "POST" });
       if (!res.ok) throw new Error((await res.json()).error ?? "Failed");
       const data = await res.json();
-      router.push(`/projects/${data.id}`);
+      router.push(projectEditorHref({ id: data.id, contentType: projects.find((p) => p.id === projectId)?.contentType ?? "video" }));
       router.refresh();
       toast({ variant: "success", title: "Project duplicated" });
     } catch (err) {
@@ -459,8 +461,12 @@ function ProjectCard({
   onDragStart: () => void;
   onDragEnd: () => void;
 }) {
-  const fmt = getVideoFormatSpec(project.videoFormat);
+  const social = isSocialProject(project);
+  const fmt = social
+    ? getSocialAspectRatioSpec(project.socialAspectRatio)
+    : getVideoFormatSpec(project.videoFormat);
   const folderName = folders.find((f) => f.id === project.folderId)?.name;
+  const href = projectEditorHref(project);
 
   return (
     <div
@@ -478,8 +484,13 @@ function ProjectCard({
         dragging && "scale-[0.98] opacity-50 ring-2 ring-accent",
       )}
     >
-      <Link href={`/projects/${project.id}`} className="block">
+      <Link href={href} className="block">
         <div className={cn("relative w-full overflow-hidden bg-muted", fmt.cardAspectClass)}>
+          {social ? (
+            <span className="absolute left-2 top-2 z-10 rounded bg-background/90 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-foreground shadow-sm">
+              Post
+            </span>
+          ) : null}
           {coverUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
@@ -501,7 +512,10 @@ function ProjectCard({
           <h3 className="truncate text-sm font-medium">{project.title || "Untitled"}</h3>
           <p className="line-clamp-2 text-2xs text-muted-foreground">{project.storyDescription}</p>
           <p className="mt-1 text-2xs text-muted-foreground/80">
-            {project.status} · {project.targetDurationSeconds}s
+            {project.status}
+            {social
+              ? ` · ${project.postFormat}`
+              : ` · ${project.targetDurationSeconds}s`}
             {folderName ? ` · ${folderName}` : ""}
           </p>
         </div>

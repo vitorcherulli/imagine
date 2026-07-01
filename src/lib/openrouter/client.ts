@@ -9,8 +9,12 @@ export const OPENROUTER_MODELS = {
 } as const;
 
 export function openRouterHeaders(extra: Record<string, string> = {}): HeadersInit {
-  const key = process.env.OPENROUTER_API_KEY;
-  if (!key) throw new Error("OPENROUTER_API_KEY is not set");
+  const key = process.env.OPENROUTER_API_KEY?.trim();
+  if (!key) {
+    throw new Error(
+      "OPENROUTER_API_KEY não está definida. Adicione em .env.local e reinicie o servidor.",
+    );
+  }
   const referer = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
   return {
     Authorization: `Bearer ${key}`,
@@ -32,4 +36,29 @@ export async function openRouterFetch(
     body: json !== undefined ? JSON.stringify(json) : init.body,
   });
   return res;
+}
+
+function extractOpenRouterMessage(text: string): string | null {
+  try {
+    const json = JSON.parse(text) as { error?: { message?: string }; message?: string };
+    return json.error?.message ?? json.message ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Human-readable OpenRouter failure for API routes and toasts. */
+export function formatOpenRouterError(status: number, text: string): string {
+  const detail = extractOpenRouterMessage(text);
+  if (status === 401) {
+    return (
+      "OpenRouter rejected the API key (401). Create a new key at openrouter.ai/settings/keys, " +
+      "update OPENROUTER_API_KEY on the server, and restart the app."
+    );
+  }
+  if (status === 402) {
+    return "OpenRouter credits exhausted (402). Add credits at openrouter.ai/settings/credits.";
+  }
+  if (detail) return detail;
+  return `OpenRouter error ${status}: ${text.slice(0, 280)}`;
 }

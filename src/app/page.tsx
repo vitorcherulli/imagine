@@ -15,10 +15,11 @@ async function loadProjectCovers(projectIds: string[]) {
     return {
       thumbnailByProject: {} as Record<string, string | null | undefined>,
       keyframeByProject: {} as Record<string, string | null>,
+      socialSlideByProject: {} as Record<string, string | null>,
     };
   }
 
-  const [youtubeRows, blockRows] = await Promise.all([
+  const [youtubeRows, blockRows, socialRows] = await Promise.all([
     db
       .select({
         projectId: schema.youtubeMetadata.projectId,
@@ -35,6 +36,15 @@ async function loadProjectCovers(projectIds: string[]) {
       .from(schema.storyBlocks)
       .where(inArray(schema.storyBlocks.projectId, projectIds))
       .orderBy(asc(schema.storyBlocks.position)),
+    db
+      .select({
+        projectId: schema.socialSlides.projectId,
+        imageUrl: schema.socialSlides.imageUrl,
+        position: schema.socialSlides.position,
+      })
+      .from(schema.socialSlides)
+      .where(inArray(schema.socialSlides.projectId, projectIds))
+      .orderBy(asc(schema.socialSlides.position)),
   ]);
 
   const thumbnailByProject = Object.fromEntries(
@@ -47,7 +57,13 @@ async function loadProjectCovers(projectIds: string[]) {
     keyframeByProject[block.projectId] = block.keyframeUrl;
   }
 
-  return { thumbnailByProject, keyframeByProject };
+  const socialSlideByProject: Record<string, string | null> = {};
+  for (const slide of socialRows) {
+    if (socialSlideByProject[slide.projectId] || !slide.imageUrl) continue;
+    socialSlideByProject[slide.projectId] = slide.imageUrl;
+  }
+
+  return { thumbnailByProject, keyframeByProject, socialSlideByProject };
 }
 
 export default async function HomePage() {
@@ -68,7 +84,8 @@ export default async function HomePage() {
   ]);
 
   const projectIds = projects.map((p) => p.id);
-  const { thumbnailByProject, keyframeByProject } = await loadProjectCovers(projectIds);
+  const { thumbnailByProject, keyframeByProject, socialSlideByProject } =
+    await loadProjectCovers(projectIds);
 
   const coverByProjectId = Object.fromEntries(
     projects.map((project) => [
@@ -76,7 +93,8 @@ export default async function HomePage() {
       resolveProjectCoverUrl({
         thumbnailUrl: thumbnailByProject[project.id],
         anchorImageUrl: project.anchorImageUrl,
-        keyframeUrl: keyframeByProject[project.id],
+        keyframeUrl:
+          socialSlideByProject[project.id] ?? keyframeByProject[project.id],
       }),
     ]),
   );
@@ -92,12 +110,20 @@ export default async function HomePage() {
               Organize by folder, duplicate templates, open recent work.
             </p>
           </div>
-          <Link href="/projects/new">
-            <Button variant="primary" size="md">
-              <Plus className="h-3.5 w-3.5" />
-              New project
-            </Button>
-          </Link>
+          <div className="flex shrink-0 gap-2">
+            <Link href="/projects/new">
+              <Button variant="primary" size="md">
+                <Plus className="h-3.5 w-3.5" />
+                New video
+              </Button>
+            </Link>
+            <Link href="/publications/new">
+              <Button variant="outline" size="md">
+                <Plus className="h-3.5 w-3.5" />
+                New publication
+              </Button>
+            </Link>
+          </div>
         </header>
 
         <section className="px-5 py-5">

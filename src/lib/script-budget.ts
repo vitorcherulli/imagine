@@ -77,7 +77,10 @@ export function computeScriptDurationBudget(
 }
 
 /** Share of target duration allocated per narrative role. */
-const ROLE_DURATION_SHARE: Record<Exclude<ScriptSegmentRole, "pause">, number> = {
+const ROLE_DURATION_SHARE: Record<
+  Exclude<ScriptSegmentRole, "pause" | "section">,
+  number
+> = {
   intro: 0.2,
   middle: 0.35,
   climax: 0.25,
@@ -106,6 +109,20 @@ export function buildSegmentBudgetAlerts(
   const alerts: SegmentBudgetAlert[] = [];
 
   markers.forEach((marker, index) => {
+    if (marker.role === "section") {
+      alerts.push({
+        index,
+        role: "section",
+        label: marker.sectionTitle ?? marker.label,
+        words: 0,
+        maxWords: 0,
+        estimatedSeconds: 0,
+        maxSeconds: 0,
+        status: "ok",
+      });
+      return;
+    }
+
     if (marker.role === "pause") {
       const pauseSeconds = parsePauseSecondsFromDisplay(marker.displayText);
       const maxSeconds = Math.max(1, Math.round(targetSeconds * 0.08));

@@ -55,3 +55,41 @@ python3 scripts/capitolio-attenborough-edit.py
 ```
 
 Abra o `.prproj` no Premiere e exporte quando quiser.
+
+## Imagine → Premiere (manifest)
+
+Fluxo com o **Script Studio** do app Imagine (camada 1 + 2):
+
+1. No Imagine: gere narração por parágrafo → **Export for Premiere** → `manifest.json` + **Download MP3** (`Narracao.mp3`).
+2. No PC (WSL ou terminal), com `ffprobe` no PATH e um `.prproj` template que já tenha os clips importados:
+
+```bash
+cd ~/imagine/editor-ia
+
+# Opção A — tudo de uma vez
+python3 scripts/imagine-manifest-to-premiere.py \
+  --manifest ~/Downloads/capitolio-manifest.json \
+  --footage "/mnt/e/Vídeos/2017/Capitólio Mar de Minas/Videos" \
+  --template "/mnt/e/Vídeos/2017/Capitólio Mar de Minas/Antigos/Capitólio IA 2026.prproj" \
+  --output "/mnt/e/Vídeos/2017/Capitólio Mar de Minas/Capitólio Imagine.prproj" \
+  --win-base "E:\Vídeos\2017\Capitólio Mar de Minas" \
+  --audio "/mnt/e/Vídeos/2017/Capitólio Mar de Minas/Audio/Narracao.mp3" \
+  --scores data/capitolio-v2-scores.json
+
+# Opção B — em dois passos
+python3 scripts/imagine-match-manifest.py \
+  --manifest manifest.json --footage /path/to/Videos --output manifest-matched.json
+
+python3 scripts/imagine-build-prproj.py \
+  --manifest manifest-matched.json \
+  --template template.prproj --output project.prproj \
+  --win-base "E:\YourProject" --audio /path/to/Narracao.mp3
+```
+
+O matcher preenche `clip.file`, `inSec`, `outSec` e gera `timeline[]` no JSON. O build coloca V1 nos `startSec` do manifest e A1 com a narração.
+
+| Script | Função |
+|--------|--------|
+| `imagine-match-manifest.py` | Keywords + scores → escolhe takes locais |
+| `imagine-build-prproj.py` | Manifest matched → `.prproj` |
+| `imagine-manifest-to-premiere.py` | Os dois passos acima |

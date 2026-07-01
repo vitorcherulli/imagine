@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { ChevronDown, Captions, Clapperboard, FileText, MonitorSmartphone } from "lucide-react";
+import { ChevronDown, Captions, Clapperboard, FileText, Languages, Monitor, MonitorSmartphone } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -9,17 +9,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { CaptionSettings } from "@/components/CaptionSettings";
-import { CutPacePicker, NarrationModePicker } from "@/components/CutPacePicker";
+import { CutPacePicker } from "@/components/CutPacePicker";
+import { PreviewModePicker } from "@/components/PreviewModePicker";
 import { ProjectBriefFields } from "@/components/ProjectBriefFields";
+import { ProjectScriptLanguagePicker } from "@/components/ProjectScriptLanguagePicker";
 import { VideoFormatPicker } from "@/components/VideoFormatPicker";
 import {
   CUT_PACE_OPTIONS,
-  NARRATION_MODE_OPTIONS,
   normalizeCutPace,
-  normalizeNarrationMode,
   type CutPaceId,
-  type NarrationModeId,
 } from "@/lib/cut-pace";
 import { CAPTION_MODE_OPTIONS, normalizeCaptionMode, type CaptionMode } from "@/lib/captions";
 import {
@@ -29,6 +29,18 @@ import {
 } from "@/lib/video-format";
 import type { Project, ProjectDna } from "@/lib/db/schema";
 import { projectDnaSummary } from "@/lib/project-dna";
+import {
+  normalizeProjectScriptLanguage,
+  projectScriptLanguageLabel,
+  type ProjectScriptLanguage,
+} from "@/lib/project-language";
+import {
+  normalizeProjectPreviewMode,
+  previewModeLabel,
+  resolvePreviewSettings,
+  type ProjectPreviewMode,
+} from "@/lib/preview-settings";
+import { usePlatformPreviewDefaults } from "@/hooks/use-platform-preview-defaults";
 import { cn } from "@/lib/utils";
 
 interface SectionProps {
@@ -88,10 +100,10 @@ interface Props {
   projectDnaItems: ProjectDna[];
   onVideoFormatChange: (format: VideoFormat) => void | Promise<void>;
   onCaptionModeChange: (mode: CaptionMode) => void | Promise<void>;
-  onCutSettingsChange: (patch: {
-    cutPace?: CutPaceId;
-    narrationMode?: NarrationModeId;
-  }) => void | Promise<void>;
+  onCutSettingsChange: (patch: { cutPace?: CutPaceId }) => void | Promise<void>;
+  onScriptLanguageChange: (language: ProjectScriptLanguage) => void | Promise<void>;
+  onPreviewModeChange: (mode: ProjectPreviewMode) => void | Promise<void>;
+  onCleanupProjectPreviews: () => Promise<number>;
   onBriefChange: (patch: { projectDnaId?: string | null; storyDescription?: string }) => void;
   onBriefSave: (patch: {
     projectDnaId?: string | null;
@@ -107,10 +119,15 @@ export function ProjectSettingsDialog({
   onVideoFormatChange,
   onCaptionModeChange,
   onCutSettingsChange,
+  onScriptLanguageChange,
+  onPreviewModeChange,
+  onCleanupProjectPreviews,
   onBriefChange,
   onBriefSave,
 }: Props) {
   const [resetEpoch, setResetEpoch] = React.useState(0);
+  const [cleaningPreviews, setCleaningPreviews] = React.useState(false);
+  const platformPreview = usePlatformPreviewDefaults();
 
   React.useEffect(() => {
     if (open) setResetEpoch((n) => n + 1);
@@ -118,14 +135,19 @@ export function ProjectSettingsDialog({
 
   const formatSpec = getVideoFormatSpec(project.videoFormat);
   const cutPace = normalizeCutPace(project.cutPace);
-  const narrationMode = normalizeNarrationMode(project.narrationMode);
   const captionMode = normalizeCaptionMode(project.captionMode);
 
   const cutPaceLabel = CUT_PACE_OPTIONS.find((o) => o.id === cutPace)?.label ?? cutPace;
-  const narrationLabel =
-    NARRATION_MODE_OPTIONS.find((o) => o.id === narrationMode)?.label ?? narrationMode;
   const captionLabel =
     CAPTION_MODE_OPTIONS.find((o) => o.id === captionMode)?.label ?? captionMode;
+  const scriptLanguage = normalizeProjectScriptLanguage(project.scriptLanguage);
+  const scriptLanguageSummary = projectScriptLanguageLabel(scriptLanguage);
+  const projectPreviewMode = normalizeProjectPreviewMode(project.previewMode);
+  const effectivePreview = resolvePreviewSettings(project.previewMode, platformPreview);
+  const previewSummary =
+    projectPreviewMode === "auto"
+      ? `Default · ${previewModeLabel(effectivePreview.mode)}`
+      : previewModeLabel(projectPreviewMode);
 
   const selectedDna = projectDnaItems.find((d) => d.id === project.projectDnaId) ?? null;
   const briefSummary =
@@ -139,7 +161,7 @@ export function ProjectSettingsDialog({
         <DialogHeader>
           <DialogTitle>Project settings</DialogTitle>
           <DialogDescription>
-            Format, captions, cut pace and brief — all in one place.
+            Format, preview, language, captions, cut pace and brief — all in one place.
           </DialogDescription>
         </DialogHeader>
 
@@ -161,6 +183,62 @@ export function ProjectSettingsDialog({
 
           <Section
             resetEpoch={resetEpoch}
+            icon={<Monitor className="h-3.5 w-3.5" />}
+            title="Timeline preview"
+            summary={previewSummary}
+          >
+            <PreviewModePicker
+              includeAuto
+              value={projectPreviewMode}
+              onChange={(value) => void onPreviewModeChange(value)}
+            />
+            <p className="text-2xs text-muted-foreground">
+              Controls in-app preview only. Export always uses full-quality clips.
+              {projectPreviewMode === "auto"
+                ? ` Platform default: ${previewModeLabel(effectivePreview.mode)}.`
+                : null}
+            </p>
+            <div className="rounded-md border border-border bg-muted/20 p-3">
+              <p className="text-2xs text-muted-foreground">
+                Preview proxies (video_preview.mp4) are safe to delete — export uses the
+                original video.mp4 files only.
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-2"
+                disabled={cleaningPreviews}
+                onClick={() => {
+                  setCleaningPreviews(true);
+                  void onCleanupProjectPreviews()
+                    .catch(() => 0)
+                    .finally(() => setCleaningPreviews(false));
+                }}
+              >
+                {cleaningPreviews ? "Deleting preview files…" : "Delete preview files"}
+              </Button>
+            </div>
+          </Section>
+
+          <Section
+            resetEpoch={resetEpoch}
+            icon={<Languages className="h-3.5 w-3.5" />}
+            title="Script language"
+            summary={scriptLanguageSummary}
+          >
+            <ProjectScriptLanguagePicker
+              value={scriptLanguage}
+              onChange={(value) => void onScriptLanguageChange(value)}
+            />
+            <p className="text-2xs text-muted-foreground">
+              Base language for AI script generation and narration. Translations to other languages
+              will come later.
+            </p>
+          </Section>
+
+          <Section
+            resetEpoch={resetEpoch}
             icon={<Captions className="h-3.5 w-3.5" />}
             title="On-screen captions"
             summary={captionLabel}
@@ -171,24 +249,15 @@ export function ProjectSettingsDialog({
           <Section
             resetEpoch={resetEpoch}
             icon={<Clapperboard className="h-3.5 w-3.5" />}
-            title="Cut pace & narration"
-            summary={`${cutPaceLabel} · ${narrationLabel}`}
+            title="Cut pace"
+            summary={cutPaceLabel}
           >
-            <div>
-              <p className="mb-1.5 text-2xs font-medium text-muted-foreground">Cut pace</p>
-              <CutPacePicker
-                value={cutPace}
-                onChange={(value) => void onCutSettingsChange({ cutPace: value })}
-              />
-            </div>
-            <div>
-              <p className="mb-1.5 text-2xs font-medium text-muted-foreground">Narration mode</p>
-              <NarrationModePicker
-                value={narrationMode}
-                onChange={(value) => void onCutSettingsChange({ narrationMode: value })}
-              />
-            </div>
+            <CutPacePicker
+              value={cutPace}
+              onChange={(value) => void onCutSettingsChange({ cutPace: value })}
+            />
             <p className="text-2xs text-muted-foreground">
+              Narration is always continuous — one voice segment with multiple visual cuts.
               Regenerate the story to apply a new pace on the timeline.
             </p>
           </Section>

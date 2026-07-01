@@ -1,3 +1,4 @@
+import type { KokoroExpressiveness } from "./elevenlabs-voice-settings";
 import type { ScriptDeliverySpan } from "./script-studio";
 
 /** Spans whose quote appears inside this speech block (paragraph). */
@@ -35,7 +36,26 @@ function escapeXml(text: string): string {
     .replace(/"/g, "&quot;");
 }
 
-function oralPrefixForKind(kind: ScriptDeliverySpan["kind"]): string {
+function oralPrefixForKind(
+  kind: ScriptDeliverySpan["kind"],
+  expressiveness: "subtle" | "natural" | "expressive" = "natural",
+): string {
+  if (expressiveness === "expressive") {
+    switch (kind) {
+      case "hook":
+      case "question":
+        return " ... ";
+      case "punch":
+      case "emotion":
+      case "contrast":
+        return " — ";
+      case "stat":
+      case "cta":
+        return ", ";
+      default:
+        return " ";
+    }
+  }
   switch (kind) {
     case "hook":
     case "question":
@@ -52,12 +72,14 @@ function oralPrefixForKind(kind: ScriptDeliverySpan["kind"]): string {
   }
 }
 
-/** Insert micro-pauses before emphasized phrases (Kokoro / Grok plain text). */
+/** Micro-pauses before emphasized phrases (Kokoro / Grok plain text). */
 export function applyOralEmphasisPauses(
   text: string,
   spans: ScriptDeliverySpan[],
+  expressiveness: "subtle" | "natural" | "expressive" = "natural",
 ): string {
   if (!spans.length) return text;
+  if (expressiveness === "subtle") return text;
 
   type Insert = { index: number; quote: string; prefix: string };
   const inserts: Insert[] = [];
@@ -67,7 +89,11 @@ export function applyOralEmphasisPauses(
     if (quote.length < 2) continue;
     const index = text.indexOf(quote);
     if (index === -1) continue;
-    inserts.push({ index, quote, prefix: oralPrefixForKind(span.kind) });
+    inserts.push({
+      index,
+      quote,
+      prefix: oralPrefixForKind(span.kind, expressiveness),
+    });
   }
 
   if (inserts.length === 0) return text;
@@ -130,10 +156,15 @@ export function prepareSpeechTextForTts(input: {
   ttsModel: string;
   isGemini: boolean;
   isElevenLabs: boolean;
+  kokoroExpressiveness?: KokoroExpressiveness;
 }): string {
   const spans = input.deliverySpans ?? [];
   if (!spans.length) return input.text;
   if (input.isGemini) return input.text;
   if (input.isElevenLabs) return applySsmlEmphasisPauses(input.text, spans);
-  return applyOralEmphasisPauses(input.text, spans);
+  return applyOralEmphasisPauses(
+    input.text,
+    spans,
+    input.kokoroExpressiveness ?? "natural",
+  );
 }

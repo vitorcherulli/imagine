@@ -5,6 +5,7 @@ import { generateSpeech, resolveTtsVoice } from "@/lib/openrouter/tts";
 import { saveBuffer, withCacheBuster } from "@/lib/storage";
 import { resolveProjectApiModels } from "@/lib/project-api-models";
 import { parseTtsSpeedFromRequest } from "@/lib/narration-speed-server";
+import { resolveElevenLabsVoiceSettings, resolveKokoroVoiceSettings } from "@/lib/elevenlabs-voice-settings";
 import { isVisualCutOnly } from "@/lib/cut-pace";
 import {
   ceilBlockDurationSeconds,
@@ -46,6 +47,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         model: models.ttsModel,
         voiceTone: owned.project.voiceTone,
         speed: ttsSpeed,
+        elevenLabsSettings: resolveElevenLabsVoiceSettings(owned.project.ttsVoiceSettings),
+        kokoroExpressiveness: resolveKokoroVoiceSettings(owned.project.ttsVoiceSettings)
+          .expressiveness,
       });
       const url = await saveBuffer(
         owned.project.id,

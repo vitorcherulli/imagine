@@ -9,6 +9,7 @@ import {
   buildScriptReviewUserPrompt,
 } from "@/lib/script-prompts";
 import { resolveProjectApiModels } from "@/lib/project-api-models";
+import { normalizeProjectScriptLanguage } from "@/lib/project-language";
 import {
   normalizeScriptSuggestions,
   normalizeScriptText,
@@ -51,10 +52,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   try {
     const models = resolveProjectApiModels(project);
+    const scriptLanguage = normalizeProjectScriptLanguage(project.scriptLanguage);
     const instruction = parsed.data.instruction?.trim();
     const raw = await chatCompletion({
       messages: [
-        { role: "system", content: buildScriptReviewSystemPrompt() },
+        { role: "system", content: buildScriptReviewSystemPrompt(scriptLanguage) },
         {
           role: "user",
           content: buildScriptReviewUserPrompt({

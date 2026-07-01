@@ -1,4 +1,4 @@
-import { OPENROUTER_MODELS, openRouterFetch } from "./client";
+import { OPENROUTER_MODELS, openRouterFetch, formatOpenRouterError } from "./client";
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -22,7 +22,7 @@ export async function chatCompletion(opts: {
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`OpenRouter chat error ${res.status}: ${text}`);
+    throw new Error(formatOpenRouterError(res.status, text));
   }
   const json = (await res.json()) as {
     choices: Array<{ message: { content: string } }>;

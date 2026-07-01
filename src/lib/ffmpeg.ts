@@ -6,6 +6,8 @@ import path from "node:path";
 
 export const SEEDANCE_MIN_DURATION = 4;
 export const SEEDANCE_MAX_DURATION = 15;
+export const VEO_MIN_DURATION = 4;
+export const VEO_MAX_DURATION = 8;
 
 export function pickSeedanceRequestDuration(targetSeconds: number): number {
   const rounded = Math.round(targetSeconds);
@@ -13,6 +15,14 @@ export function pickSeedanceRequestDuration(targetSeconds: number): number {
     SEEDANCE_MAX_DURATION,
     Math.max(SEEDANCE_MIN_DURATION, rounded),
   );
+}
+
+export function pickVideoRequestDuration(targetSeconds: number, model?: string): number {
+  const rounded = Math.round(targetSeconds);
+  if (model?.includes("veo")) {
+    return Math.min(VEO_MAX_DURATION, Math.max(VEO_MIN_DURATION, rounded));
+  }
+  return pickSeedanceRequestDuration(targetSeconds);
 }
 
 export function hasFfmpeg(): boolean {
@@ -82,9 +92,16 @@ import {
   effectiveMusicGain,
   effectiveNarrationGain,
   effectiveSceneGain,
+  sanitizeGain,
 } from "./volume";
+import { type MusicSwellTimelineBlock, listMusicSwellZones, MUSIC_SWELL_VOLUME_MULTIPLIER } from "./music-swell";
+import { defaultMusic2TimelineStartSeconds } from "./music-duration-mismatch";
+import { normalizeMusicSpanSeconds } from "./music-timeline";
 import { escapeFfmpegSubtitlesPath } from "./captions";
 import { normalizeVideoFormat, type VideoFormat } from "./video-format";
+import { getSocialAspectRatioSpec, type SocialAspectRatio } from "./social-aspect-ratio";
+import type { KeyframeFitMode } from "./keyframe-fit";
+import { normalizeKeyframeFitMode } from "./keyframe-fit";
 import {
   DEFAULT_EXPORT_RESOLUTION,
   EXPORT_RESOLUTIONS,
@@ -93,14 +110,917 @@ import {
   type ExportResolution,
   type ExportResolutionId,
 } from "./export-resolutions";
+import {
+  DEFAULT_EXPORT_QUALITY,
+  isExportQualityId,
+  resolveExportEncoding,
+  type ExportEncodingSettings,
+  type ExportQualityId,
+} from "./export-quality";
 
 export type { ExportResolution, ExportResolutionId } from "./export-resolutions";
+export type { ExportEncodingSettings, ExportQualityId } from "./export-quality";
 export {
   DEFAULT_EXPORT_RESOLUTION,
   EXPORT_RESOLUTIONS,
   isExportResolutionId,
   resolveExportResolution,
 } from "./export-resolutions";
+export {
+  DEFAULT_EXPORT_QUALITY,
+  EXPORT_QUALITY_PRESETS,
+  exportQualityOptionLabel,
+  isExportQualityId,
+  resolveExportEncoding,
+} from "./export-quality";
+
+export function safeSegmentDurationSeconds(durationSeconds: number): number {
+  const n = Number(durationSeconds);
+  if (!Number.isFinite(n) || n <= 0) return 0.5;
+  return Math.max(0.5, n);
+}
+
+function ffmpegAudioBaseFilter(): string {
+  return "aresample=44100,aformat=channel_layouts=stereo";
+}
+
+/** Piecewise gain expression for music swell zones on a single background bed. */
+function ffmpegMusicSwellGainExpression(
+  baseGain: number,
+  zones: ReturnType<typeof listMusicSwellZones>,
+): string {
+  const base = sanitizeGain(baseGain);
+  if (zones.length === 0) return base.toFixed(6);
+
+  const peak = sanitizeGain(baseGain * MUSIC_SWELL_VOLUME_MULTIPLIER);
+  const b = base.toFixed(6);
+  const p = peak.toFixed(6);
+  let expr = b;
+  for (const z of [...zones].reverse()) {
+    const fadeIn = Math.max(0.001, z.pauseStartSeconds - z.fadeStartSeconds);
+    const fadeOut = Math.max(0.001, z.fadeEndSeconds - z.pauseEndSeconds);
+    expr =
+      `if(between(t,${z.pauseStartSeconds},${z.pauseEndSeconds}),${p},` +
+      `if(between(t,${z.fadeStartSeconds},${z.pauseStartSeconds}),${b}+(${p}-${b})*(t-${z.fadeStartSeconds})/${fadeIn},` +
+      `if(between(t,${z.pauseEndSeconds},${z.fadeEndSeconds}),${p}-(${p}-${b})*(t-${z.pauseEndSeconds})/${fadeOut},${expr})))`;
+  }
+  return expr;
+}
+
+function appendExportFinalMusicMix(opts: {
+  filterParts: string[];
+  hasMusic: boolean;
+  musicInputIdx: number;
+  music2InputIdx: number;
+  hasMusic2: boolean;
+  musicFileStart: number;
+  music2FileStart: number;
+  music2TimelineStart: number | null;
+  music1DurationSeconds: number | null;
+  music2DurationSeconds: number | null;
+  mixDurationSeconds: number;
+  musicVolume?: number | null;
+  masterVolume?: number | null;
+  timelineBlocks: MusicSwellTimelineBlock[];
+}): string {
+  const {
+    filterParts,
+    hasMusic,
+    musicInputIdx,
+    music2InputIdx,
+    hasMusic2,
+    musicFileStart,
+    music2FileStart,
+    music2TimelineStart,
+    music1DurationSeconds,
+    music2DurationSeconds,
+    mixDurationSeconds,
+    musicVolume,
+    masterVolume,
+    timelineBlocks,
+  } = opts;
+
+  if (!hasMusic || musicInputIdx < 0 || mixDurationSeconds <= 0.05) return "outa";
+
+  const baseGain = effectiveMusicGain({ musicVolume, masterVolume });
+  const zones = listMusicSwellZones(timelineBlocks);
+  const volumeFilter =
+    zones.length > 0
+      ? `volume=volume='${ffmpegMusicSwellGainExpression(baseGain, zones)}'`
+      : `volume=${sanitizeGain(baseGain).toFixed(4)}`;
+  const base = ffmpegAudioBaseFilter();
+  const musicLabel = "musicbed";
+
+  if (hasMusic2 && music2TimelineStart != null && music2TimelineStart < mixDurationSeconds - 0.05) {
+    const part1Dur = Math.min(music2TimelineStart, mixDurationSeconds);
+    const part2Dur = mixDurationSeconds - part1Dur;
+    const offset1 = musicFileStart;
+    const maxPart1 =
+      music1DurationSeconds != null
+        ? Math.min(part1Dur, Math.max(0, music1DurationSeconds - offset1))
+        : part1Dur;
+    const actualPart1 = Math.max(0, maxPart1);
+    const actualPart2 = Math.max(0, Math.min(part2Dur, mixDurationSeconds - actualPart1));
+
+    if (actualPart1 > 0.05 && actualPart2 > 0.05) {
+      filterParts.push(
+        `[${musicInputIdx}:a]${base},atrim=start=${offset1}:duration=${actualPart1},asetpts=PTS-STARTPTS[m1final]`,
+      );
+      filterParts.push(
+        `[${music2InputIdx}:a]${base},atrim=start=${music2FileStart}:duration=${actualPart2},asetpts=PTS-STARTPTS[m2final]`,
+      );
+      filterParts.push(`[m1final][m2final]concat=n=2:v=0:a=1[musicraw]`);
+      filterParts.push(`[musicraw]${volumeFilter}[${musicLabel}]`);
+    } else if (actualPart1 > 0.05) {
+      filterParts.push(
+        `[${musicInputIdx}:a]${base},atrim=start=${offset1}:duration=${actualPart1},asetpts=PTS-STARTPTS,${volumeFilter}[${musicLabel}]`,
+      );
+    } else if (actualPart2 > 0.05) {
+      const local = part1Dur;
+      const offset2 =
+        music2DurationSeconds != null && music2DurationSeconds > 0
+          ? music2FileStart + (local % music2DurationSeconds)
+          : music2FileStart;
+      filterParts.push(
+        `[${music2InputIdx}:a]${base},atrim=start=${offset2}:duration=${actualPart2},asetpts=PTS-STARTPTS,${volumeFilter}[${musicLabel}]`,
+      );
+    } else {
+      return "outa";
+    }
+  } else {
+    filterParts.push(
+      `[${musicInputIdx}:a]${base},atrim=start=${musicFileStart}:duration=${mixDurationSeconds},asetpts=PTS-STARTPTS,${volumeFilter}[${musicLabel}]`,
+    );
+  }
+
+  filterParts.push(
+    `[outa][${musicLabel}]amix=inputs=2:duration=first:dropout_transition=0,aresample=44100[outafinal]`,
+  );
+  return "outafinal";
+}
+
+/** Pixel canvas for keyframes / script imports — matches default 1080p export framing. */
+export function keyframeCanvasSize(videoFormat: VideoFormat | unknown = "horizontal"): {
+  width: number;
+  height: number;
+} {
+  const res = resolveExportResolution(DEFAULT_EXPORT_RESOLUTION, videoFormat);
+  return { width: res.width, height: res.height };
+}
+
+/** Build ffmpeg scale+pad filter — preserves photo aspect ratio inside project frame. */
+export function buildContainImageFilter(width: number, height: number): string {
+  return (
+    `scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=lanczos,` +
+    `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=black`
+  );
+}
+
+/** Scale up and center-crop — fills the project frame with no letterboxing. */
+export function buildCoverImageFilter(width: number, height: number): string {
+  return (
+    `scale=${width}:${height}:force_original_aspect_ratio=increase:flags=lanczos,` +
+    `crop=${width}:${height}:(iw-${width})/2:(ih-${height})/2`
+  );
+}
+
+function buildKeyframeFitFilter(
+  width: number,
+  height: number,
+  fitMode: KeyframeFitMode,
+): string {
+  return fitMode === "cover"
+    ? buildCoverImageFilter(width, height)
+    : buildContainImageFilter(width, height);
+}
+
+/** Solid black MP4 segment for blocks without video or keyframe. */
+export async function createBlackSegmentVideo(opts: {
+  outputPath: string;
+  durationSeconds: number;
+  resolution?: ExportResolutionId;
+  videoFormat?: VideoFormat | unknown;
+  fps?: number;
+}): Promise<string> {
+  const {
+    outputPath,
+    durationSeconds,
+    resolution = DEFAULT_EXPORT_RESOLUTION,
+    videoFormat = "horizontal",
+    fps = 30,
+  } = opts;
+  const res = resolveExportResolution(resolution, videoFormat);
+  const dur = safeSegmentDurationSeconds(durationSeconds);
+  await fs.mkdir(path.dirname(outputPath), { recursive: true });
+  await runFfmpeg([
+    "-y",
+    "-f",
+    "lavfi",
+    "-i",
+    `color=c=black:s=${res.width}x${res.height}:r=${fps}`,
+    "-t",
+    String(dur),
+    "-c:v",
+    "libx264",
+    "-pix_fmt",
+    "yuv420p",
+    "-movflags",
+    "+faststart",
+    outputPath,
+  ]);
+  return outputPath;
+}
+
+/** Hold a keyframe still for the block duration (image-only export segments). */
+export async function createStillSegmentVideo(opts: {
+  imagePath: string;
+  outputPath: string;
+  durationSeconds: number;
+  resolution?: ExportResolutionId;
+  videoFormat?: VideoFormat | unknown;
+  fitMode?: KeyframeFitMode | unknown;
+  fps?: number;
+}): Promise<string> {
+  const {
+    imagePath,
+    outputPath,
+    durationSeconds,
+    resolution = DEFAULT_EXPORT_RESOLUTION,
+    videoFormat = "horizontal",
+    fitMode = "cover",
+    fps = 30,
+  } = opts;
+  const res = resolveExportResolution(resolution, videoFormat);
+  const dur = safeSegmentDurationSeconds(durationSeconds);
+  const mode = normalizeKeyframeFitMode(fitMode);
+  const vf = `${buildKeyframeFitFilter(res.width, res.height, mode)},setsar=1,fps=${fps},format=yuv420p`;
+  await fs.mkdir(path.dirname(outputPath), { recursive: true });
+  await runFfmpeg([
+    "-y",
+    "-loop",
+    "1",
+    "-i",
+    imagePath,
+    "-t",
+    String(dur),
+    "-vf",
+    vf,
+    "-c:v",
+    "libx264",
+    "-pix_fmt",
+    "yuv420p",
+    "-movflags",
+    "+faststart",
+    outputPath,
+  ]);
+  return outputPath;
+}
+
+export type TimelineFrameSource = { kind: "video"; path: string; seekSeconds: number } | { kind: "image"; path: string } | { kind: "black" };
+
+/** Single PNG still at export resolution — matches preview/export framing. */
+export async function exportTimelineFramePng(opts: {
+  outputPath: string;
+  resolution?: ExportResolutionId;
+  videoFormat?: VideoFormat | unknown;
+  fitMode?: KeyframeFitMode | unknown;
+  source: TimelineFrameSource;
+}): Promise<string> {
+  if (!hasFfmpeg()) {
+    throw new Error("ffmpeg is required to export frames. Install ffmpeg on the server.");
+  }
+
+  const {
+    outputPath,
+    resolution = DEFAULT_EXPORT_RESOLUTION,
+    videoFormat = "horizontal",
+    fitMode = "cover",
+    source,
+  } = opts;
+  const res = resolveExportResolution(resolution, videoFormat);
+  const mode = normalizeKeyframeFitMode(fitMode);
+  const vf =
+    source.kind === "image"
+      ? buildKeyframeFitFilter(res.width, res.height, mode)
+      : `${buildContainImageFilter(res.width, res.height)},setsar=1`;
+
+  await fs.mkdir(path.dirname(outputPath), { recursive: true });
+
+  if (source.kind === "black") {
+    await runFfmpeg([
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      `color=c=black:s=${res.width}x${res.height}`,
+      "-frames:v",
+      "1",
+      "-c:v",
+      "png",
+      outputPath,
+    ]);
+    return outputPath;
+  }
+
+  if (source.kind === "image") {
+    await runFfmpeg([
+      "-y",
+      "-i",
+      source.path,
+      "-frames:v",
+      "1",
+      "-vf",
+      vf,
+      "-c:v",
+      "png",
+      outputPath,
+    ]);
+    return outputPath;
+  }
+
+  const seek = Math.max(0, source.seekSeconds);
+  await runFfmpeg([
+    "-y",
+    "-ss",
+    String(seek),
+    "-i",
+    source.path,
+    "-frames:v",
+    "1",
+    "-vf",
+    vf,
+    "-c:v",
+    "png",
+    outputPath,
+  ]);
+  return outputPath;
+}
+
+/**
+ * Letterbox or pillarbox a photo into the project's video format (16:9 or 9:16).
+ * A square image stays square inside the frame — never stretched.
+ * Returns the original buffer when ffmpeg is unavailable.
+ */
+export async function fitImageBufferToVideoFormat(
+  input: { buffer: Buffer; ext: string },
+  videoFormat: VideoFormat | unknown = "horizontal",
+  fitMode: KeyframeFitMode | unknown = "cover",
+): Promise<Buffer> {
+  if (!hasFfmpeg() || input.buffer.length === 0) return input.buffer;
+
+  if (isVideoMp4Buffer(input.buffer)) {
+    throw new Error("Cannot use a video file as a keyframe. Choose a photo (JPG/PNG).");
+  }
+
+  const detectedExt = detectImageExt(input.buffer);
+  const hintedExt = input.ext.toLowerCase().startsWith(".")
+    ? input.ext.toLowerCase()
+    : `.${input.ext.toLowerCase()}`;
+  const ext = detectedExt ?? hintedExt;
+  const { width, height } = keyframeCanvasSize(videoFormat);
+  const mode = normalizeKeyframeFitMode(fitMode);
+  const outExt = ext === ".png" ? ".png" : ".jpg";
+  const tmpDir = path.join(
+    os.tmpdir(),
+    "imagine-image-frame",
+    `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+  );
+  await fs.mkdir(tmpDir, { recursive: true });
+  const inPath = path.join(tmpDir, `in${ext}`);
+  const outPath = path.join(tmpDir, `out${outExt}`);
+
+  try {
+    await fs.writeFile(inPath, input.buffer);
+    const encodeArgs =
+      outExt === ".png"
+        ? ["-frames:v", "1", "-c:v", "png"]
+        : ["-frames:v", "1", "-q:v", "2"];
+    await runFfmpeg([
+      "-y",
+      "-i",
+      inPath,
+      "-vf",
+      buildKeyframeFitFilter(width, height, mode),
+      ...encodeArgs,
+      outPath,
+    ]);
+    return await fs.readFile(outPath);
+  } catch (err) {
+    const ext = input.ext.toLowerCase().startsWith(".")
+      ? input.ext.toLowerCase()
+      : `.${input.ext.toLowerCase()}`;
+    if (ext === ".webp" || ext === ".gif") {
+      throw new Error(
+        `Could not process this image (${ext}). Try JPG or PNG, or check that ffmpeg is installed correctly.`,
+      );
+    }
+    throw err;
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/** Crop/letterbox a photo into a social feed aspect ratio (4:5 or 1:1). */
+export async function fitImageBufferToSocialAspect(
+  input: { buffer: Buffer; ext: string },
+  aspectRatio: SocialAspectRatio | unknown = "4:5",
+): Promise<Buffer> {
+  if (!hasFfmpeg() || input.buffer.length === 0) return input.buffer;
+
+  if (isVideoMp4Buffer(input.buffer)) {
+    throw new Error("Cannot use a video file as a slide image. Choose a photo (JPG/PNG).");
+  }
+
+  const spec = getSocialAspectRatioSpec(aspectRatio);
+  const detectedExt = detectImageExt(input.buffer);
+  const hintedExt = input.ext.toLowerCase().startsWith(".")
+    ? input.ext.toLowerCase()
+    : `.${input.ext.toLowerCase()}`;
+  const ext = detectedExt ?? hintedExt;
+  const outExt = ext === ".png" ? ".png" : ".jpg";
+  const tmpDir = path.join(
+    os.tmpdir(),
+    "imagine-social-frame",
+    `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+  );
+  await fs.mkdir(tmpDir, { recursive: true });
+  const inPath = path.join(tmpDir, `in${ext}`);
+  const outPath = path.join(tmpDir, `out${outExt}`);
+
+  try {
+    await fs.writeFile(inPath, input.buffer);
+    const encodeArgs =
+      outExt === ".png"
+        ? ["-frames:v", "1", "-c:v", "png"]
+        : ["-frames:v", "1", "-q:v", "2"];
+    await runFfmpeg([
+      "-y",
+      "-i",
+      inPath,
+      "-vf",
+      buildCoverImageFilter(spec.width, spec.height),
+      ...encodeArgs,
+      outPath,
+    ]);
+    return await fs.readFile(outPath);
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/** ISO BMFF major brand at bytes 8–12 when `ftyp` is at 4–8 (AVIF, HEIC, MP4, …). */
+function isoBmffBrand(buffer: Buffer): string | null {
+  if (buffer.length < 12 || buffer.toString("ascii", 4, 8) !== "ftyp") return null;
+  return buffer.toString("ascii", 8, 12).toLowerCase();
+}
+
+/** Detect image format from magic bytes — returns null when unrecognized. */
+export function detectImageExt(buffer: Buffer): string | null {
+  if (buffer.length < 12) return null;
+  if (buffer[0] === 0xff && buffer[1] === 0xd8) return ".jpg";
+  if (
+    buffer.toString("ascii", 0, 4) === "RIFF" &&
+    buffer.toString("ascii", 8, 12) === "WEBP"
+  ) {
+    return ".webp";
+  }
+  if (
+    buffer.toString("ascii", 0, 6) === "GIF87a" ||
+    buffer.toString("ascii", 0, 6) === "GIF89a"
+  ) {
+    return ".gif";
+  }
+  if (buffer[0] === 0x89 && buffer[1] === 0x50) return ".png";
+
+  const brand = isoBmffBrand(buffer);
+  if (brand) {
+    if (brand.startsWith("avif") || brand === "avis") return ".avif";
+    if (
+      brand.startsWith("heic") ||
+      brand.startsWith("heif") ||
+      brand === "mif1" ||
+      brand === "msf1"
+    ) {
+      return ".heic";
+    }
+    return null;
+  }
+
+  return null;
+}
+
+export function isJpegBuffer(buffer: Buffer): boolean {
+  return buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8;
+}
+
+export function isPngBuffer(buffer: Buffer): boolean {
+  return buffer.length >= 4 && buffer[0] === 0x89 && buffer[1] === 0x50;
+}
+
+/** True for MP4/MOV video containers — not AVIF/HEIC still images (also use `ftyp`). */
+export function isVideoMp4Buffer(buffer: Buffer): boolean {
+  const brand = isoBmffBrand(buffer);
+  if (!brand) return false;
+  if (
+    brand.startsWith("avif") ||
+    brand === "avis" ||
+    brand.startsWith("heic") ||
+    brand.startsWith("heif") ||
+    brand === "mif1" ||
+    brand === "msf1"
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/** @deprecated Prefer {@link isVideoMp4Buffer} — excludes AVIF/HEIC image containers. */
+export function isMp4Buffer(buffer: Buffer): boolean {
+  return isVideoMp4Buffer(buffer);
+}
+
+/** Grab the first frame from a video buffer as JPEG (image-to-video fallback). */
+export async function extractFirstFrameFromVideoBuffer(buffer: Buffer): Promise<Buffer> {
+  if (!isVideoMp4Buffer(buffer)) {
+    throw new Error("Video buffer is not a valid MP4 file.");
+  }
+  if (!hasFfmpeg()) {
+    throw new Error(
+      "ffmpeg is required to extract a still from video. Install ffmpeg or upload a JPG/PNG keyframe.",
+    );
+  }
+
+  const tmpDir = path.join(
+    os.tmpdir(),
+    "imagine-video-frame-extract",
+    `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+  );
+  await fs.mkdir(tmpDir, { recursive: true });
+  const inPath = path.join(tmpDir, "in.mp4");
+  const outPath = path.join(tmpDir, "out.jpg");
+
+  try {
+    await fs.writeFile(inPath, buffer);
+    await runFfmpeg([
+      "-y",
+      "-i",
+      inPath,
+      "-frames:v",
+      "1",
+      "-q:v",
+      "2",
+      outPath,
+    ]);
+    const jpeg = await fs.readFile(outPath);
+    if (!isJpegBuffer(jpeg)) {
+      throw new Error("Could not extract a still frame from the video.");
+    }
+    return jpeg;
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+function resolveImageInputExt(buffer: Buffer, hintExt?: string): string {
+  const fromMagic = detectImageExt(buffer);
+  if (fromMagic) return fromMagic;
+
+  const hint = hintExt?.toLowerCase();
+  if (hint === ".jpeg") return ".jpg";
+  if (hint && [".jpg", ".png", ".webp", ".gif", ".avif", ".heic"].includes(hint)) return hint;
+
+  return ".bin";
+}
+
+function invalidKeyframeMessage(buffer: Buffer): string {
+  return (
+    "Keyframe image is invalid or corrupted. Regenerate the keyframe or upload a JPG/PNG file."
+  );
+}
+
+/**
+ * Kling (via OpenRouter) accepts JPEG/PNG for first-frame video generation.
+ * WebP, GIF, and mislabeled files are converted to JPEG when ffmpeg is available.
+ */
+export async function convertImageBufferToJpeg(input: {
+  buffer: Buffer;
+  ext?: string;
+}): Promise<Buffer> {
+  if (input.buffer.length < 64) {
+    throw new Error(invalidKeyframeMessage(input.buffer));
+  }
+
+  if (isJpegBuffer(input.buffer)) {
+    return input.buffer;
+  }
+
+  if (isPngBuffer(input.buffer) && !hasFfmpeg()) {
+    return input.buffer;
+  }
+
+  if (!hasFfmpeg()) {
+    if (isPngBuffer(input.buffer)) return input.buffer;
+    throw new Error(
+      "This keyframe format is not supported for video generation. " +
+        "Use JPG or PNG, or install ffmpeg on the server.",
+    );
+  }
+
+  const normalizedExt = resolveImageInputExt(input.buffer, input.ext);
+  const tmpDir = path.join(
+    os.tmpdir(),
+    "imagine-video-frame",
+    `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+  );
+  await fs.mkdir(tmpDir, { recursive: true });
+  const inPath = path.join(tmpDir, `in${normalizedExt}`);
+  const outPath = path.join(tmpDir, "out.jpg");
+
+  try {
+    await fs.writeFile(inPath, input.buffer);
+    await runFfmpeg([
+      "-y",
+      "-i",
+      inPath,
+      "-frames:v",
+      "1",
+      "-q:v",
+      "2",
+      outPath,
+    ]);
+    const jpeg = await fs.readFile(outPath);
+    if (!isJpegBuffer(jpeg)) {
+      throw new Error(invalidKeyframeMessage(input.buffer));
+    }
+    return jpeg;
+  } catch (err) {
+    if (err instanceof Error && err.message.includes("Keyframe")) throw err;
+    throw new Error(invalidKeyframeMessage(input.buffer));
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/** Above this ffmpeg input count, mux each block first then concat (large timelines). */
+const EXPORT_STAGED_INPUT_THRESHOLD = 32;
+
+type ExportAudioSegment = {
+  videoPath: string;
+  audioPath: string;
+  sceneAudioPath?: string | null;
+  audioVolume?: number;
+  sceneAudioVolume?: number;
+  durationSeconds: number;
+  audioTrimStart?: number;
+  musicSwell?: boolean;
+};
+
+function countExportFfmpegInputs(
+  segments: ExportAudioSegment[],
+  hasMusic: boolean,
+  hasMusic2: boolean,
+): number {
+  const sceneCount = segments.filter((s) => s.sceneAudioPath).length;
+  return segments.length * 2 + sceneCount + (hasMusic ? 1 : 0) + (hasMusic2 ? 1 : 0);
+}
+
+function buildExportScaleFilter(res: ExportResolution, fps: number): string {
+  return (
+    `scale=${res.width}:${res.height}:force_original_aspect_ratio=decrease:flags=lanczos,` +
+    `pad=${res.width}:${res.height}:(ow-iw)/2:(oh-ih)/2:color=black,` +
+    `setsar=1,fps=${fps},format=yuv420p`
+  );
+}
+
+function buildExportVideoEncodeArgs(encoding: ExportEncodingSettings): string[] {
+  const args = [
+    "-c:v",
+    "libx264",
+    "-preset",
+    encoding.preset,
+    "-crf",
+    String(encoding.crf),
+  ];
+  if (encoding.maxVideoBitrateKbps != null && encoding.maxVideoBitrateKbps > 0) {
+    const k = encoding.maxVideoBitrateKbps;
+    args.push("-maxrate", `${k}k`, "-bufsize", `${k * 2}k`);
+  }
+  args.push("-pix_fmt", "yuv420p");
+  return args;
+}
+
+function buildExportAudioEncodeArgs(encoding: ExportEncodingSettings): string[] {
+  return ["-c:a", "aac", "-b:a", `${encoding.audioBitrateKbps}k`];
+}
+
+async function muxExportSegmentToFile(opts: {
+  segment: ExportAudioSegment;
+  outputPath: string;
+  encoding: ExportEncodingSettings;
+  fps: number;
+  narrationVolume?: number;
+  sceneVolume?: number;
+  masterVolume?: number;
+}): Promise<void> {
+  const { segment, outputPath, encoding, fps, narrationVolume, sceneVolume, masterVolume } = opts;
+  const dur = safeSegmentDurationSeconds(segment.durationSeconds);
+  const scaleFilter = buildExportScaleFilter(encoding, fps);
+  const args = ["-y", "-i", segment.videoPath, "-i", segment.audioPath];
+  const filterParts: string[] = [];
+  let sceneInputIdx: number | undefined;
+  if (segment.sceneAudioPath) {
+    args.push("-i", segment.sceneAudioPath);
+    sceneInputIdx = 2;
+  }
+
+  const narrationGain = sanitizeGain(
+    effectiveNarrationGain({
+      blockVolume: segment.audioVolume,
+      trackVolume: narrationVolume,
+      masterVolume,
+    }),
+  );
+  const audioStart = Math.max(0, segment.audioTrimStart ?? 0);
+  filterParts.push(
+    `[0:v]${scaleFilter},loop=loop=-1:size=32767:start=0,trim=duration=${dur},setpts=PTS-STARTPTS[vout]`,
+  );
+  filterParts.push(
+    `[1:a]${ffmpegAudioBaseFilter()},volume=${narrationGain.toFixed(4)},atrim=start=${audioStart}:duration=${dur},asetpts=PTS-STARTPTS[narr]`,
+  );
+
+  let audioMap = "narr";
+  if (sceneInputIdx !== undefined) {
+    const sceneGain = sanitizeGain(
+      effectiveSceneGain({
+        blockVolume: segment.sceneAudioVolume,
+        trackVolume: sceneVolume,
+        masterVolume,
+      }),
+    );
+    filterParts.push(
+      `[${sceneInputIdx}:a]${ffmpegAudioBaseFilter()},volume=${sceneGain.toFixed(4)},atrim=duration=${dur},asetpts=PTS-STARTPTS[scene]`,
+    );
+    filterParts.push(
+      `[narr][scene]amix=inputs=2:duration=first:dropout_transition=0,aresample=44100[aout]`,
+    );
+    audioMap = "aout";
+  }
+
+  args.push("-filter_complex", filterParts.join(";"));
+  args.push("-map", "[vout]");
+  args.push("-map", `[${audioMap}]`);
+  args.push(...buildExportVideoEncodeArgs(encoding));
+  args.push(...buildExportAudioEncodeArgs(encoding));
+  args.push("-movflags", "+faststart", outputPath);
+  await runFfmpeg(args);
+}
+
+async function concatBlocksWithAudioStaged(opts: {
+  segments: ExportAudioSegment[];
+  outputPath: string;
+  musicPath?: string | null;
+  music2Path?: string | null;
+  musicVolume?: number;
+  musicStartSeconds?: number;
+  musicSpanSeconds?: number | null;
+  music2TimelineStartSeconds?: number | null;
+  music2FileStartSeconds?: number;
+  music1DurationSeconds?: number | null;
+  music2DurationSeconds?: number | null;
+  narrationVolume?: number;
+  sceneVolume?: number;
+  masterVolume?: number;
+  resolution?: ExportResolutionId;
+  quality?: ExportQualityId;
+  videoFormat?: VideoFormat | unknown;
+  captionsAssPath?: string | null;
+  fps?: number;
+  timelineBlocks?: MusicSwellTimelineBlock[];
+  onProgress?: (fraction: number, message: string) => void;
+}): Promise<void> {
+  const {
+    segments,
+    outputPath,
+    musicPath,
+    music2Path = null,
+    musicVolume,
+    musicStartSeconds = 0,
+    musicSpanSeconds = null,
+    music2TimelineStartSeconds = null,
+    music2FileStartSeconds = 0,
+    music1DurationSeconds = null,
+    music2DurationSeconds = null,
+    narrationVolume,
+    sceneVolume,
+    masterVolume,
+    resolution = DEFAULT_EXPORT_RESOLUTION,
+    quality = DEFAULT_EXPORT_QUALITY,
+    videoFormat = "horizontal",
+    captionsAssPath = null,
+    fps = 30,
+    timelineBlocks = [],
+    onProgress,
+  } = opts;
+  if (segments.length === 0) throw new Error("No segments to export");
+
+  const encoding = resolveExportEncoding(resolution, quality, videoFormat);
+  const workDir = path.dirname(outputPath);
+  await fs.mkdir(workDir, { recursive: true });
+
+  const muxedPaths: string[] = [];
+  for (let i = 0; i < segments.length; i++) {
+    onProgress?.(
+      segments.length > 0 ? (i / segments.length) * 0.85 : 0,
+      `Codificando bloco ${i + 1} de ${segments.length}…`,
+    );
+    const muxedPath = path.join(workDir, `export_mux_${i}.mp4`);
+    await muxExportSegmentToFile({
+      segment: segments[i]!,
+      outputPath: muxedPath,
+      encoding,
+      fps,
+      narrationVolume,
+      sceneVolume,
+      masterVolume,
+    });
+    muxedPaths.push(muxedPath);
+  }
+
+  onProgress?.(0.9, "Concatenando blocos e mixando áudio…");
+
+  const args: string[] = ["-y"];
+  for (const p of muxedPaths) args.push("-i", p);
+
+  const hasMusic = !!musicPath;
+  const hasMusic2 = Boolean(music2Path);
+  let musicInputIdx = -1;
+  let music2InputIdx = -1;
+  let nextInput = muxedPaths.length;
+  if (hasMusic) {
+    musicInputIdx = nextInput;
+    if (hasMusic2) {
+      args.push("-i", musicPath!);
+    } else {
+      args.push("-stream_loop", "-1", "-i", musicPath!);
+    }
+    nextInput += 1;
+  }
+  if (hasMusic2) {
+    music2InputIdx = nextInput;
+    args.push("-stream_loop", "-1", "-i", music2Path!);
+  }
+
+  const totalVideoDuration = segments.reduce(
+    (sum, seg) => sum + safeSegmentDurationSeconds(seg.durationSeconds),
+    0,
+  );
+  const effectiveMusicSpan =
+    normalizeMusicSpanSeconds(musicSpanSeconds) ?? totalVideoDuration;
+  const musicFileStart = Math.max(0, musicStartSeconds);
+  const music2FileStart = Math.max(0, music2FileStartSeconds);
+  const music2TimelineStart = hasMusic2
+    ? music2TimelineStartSeconds ??
+      defaultMusic2TimelineStartSeconds(music1DurationSeconds ?? 0, musicFileStart)
+    : null;
+
+  const filterParts: string[] = [];
+  const concatInputs = muxedPaths.map((_, i) => `[${i}:v][${i}:a]`).join("");
+  filterParts.push(
+    `${concatInputs}concat=n=${muxedPaths.length}:v=1:a=1[outv][outa]`,
+  );
+
+  const finalAudioLabel = appendExportFinalMusicMix({
+    filterParts,
+    hasMusic,
+    musicInputIdx,
+    music2InputIdx,
+    hasMusic2,
+    musicFileStart,
+    music2FileStart,
+    music2TimelineStart,
+    music1DurationSeconds,
+    music2DurationSeconds,
+    mixDurationSeconds: Math.min(effectiveMusicSpan, totalVideoDuration),
+    musicVolume,
+    masterVolume,
+    timelineBlocks,
+  });
+
+  let videoMapLabel = "outv";
+  if (captionsAssPath) {
+    const escaped = escapeFfmpegSubtitlesPath(captionsAssPath);
+    filterParts.push(`[outv]subtitles='${escaped}'[outvc]`);
+    videoMapLabel = "outvc";
+  }
+
+  args.push("-filter_complex", filterParts.join(";"));
+  args.push("-map", `[${videoMapLabel}]`);
+  args.push("-map", `[${finalAudioLabel}]`);
+  args.push(...buildExportVideoEncodeArgs(encoding));
+  args.push(...buildExportAudioEncodeArgs(encoding));
+  args.push("-shortest", "-movflags", "+faststart", outputPath);
+  await runFfmpeg(args);
+}
 
 export async function concatBlocksWithAudio(opts: {
   segments: Array<{
@@ -113,36 +1033,67 @@ export async function concatBlocksWithAudio(opts: {
     durationSeconds: number;
     /** Slice narration from this offset (continuous visual cuts). */
     audioTrimStart?: number;
+    /** @deprecated use timeline swell ramp via timelineBlocks */
+    musicSwell?: boolean;
   }>;
+  /** Timeline blocks for smooth music swell ramps on export. */
+  timelineBlocks?: MusicSwellTimelineBlock[];
   outputPath: string;
   musicPath?: string | null;
+  music2Path?: string | null;
   musicVolume?: number;
+  musicStartSeconds?: number;
+  /** Null = use full video duration. */
+  musicSpanSeconds?: number | null;
+  music2TimelineStartSeconds?: number | null;
+  music2FileStartSeconds?: number;
+  music1DurationSeconds?: number | null;
+  music2DurationSeconds?: number | null;
   narrationVolume?: number;
   sceneVolume?: number;
   masterVolume?: number;
   resolution?: ExportResolutionId;
+  quality?: ExportQualityId;
   videoFormat?: VideoFormat | unknown;
   /** Optional ASS subtitle file burned into the exported video. */
   captionsAssPath?: string | null;
   fps?: number;
+  onProgress?: (fraction: number, message: string) => void;
 }): Promise<void> {
   const {
     segments,
     outputPath,
     musicPath,
+    music2Path = null,
     musicVolume,
+    musicStartSeconds = 0,
+    musicSpanSeconds = null,
+    music2TimelineStartSeconds = null,
+    music2FileStartSeconds = 0,
+    music1DurationSeconds = null,
+    music2DurationSeconds = null,
     narrationVolume,
     sceneVolume,
     masterVolume,
     resolution = DEFAULT_EXPORT_RESOLUTION,
+    quality = DEFAULT_EXPORT_QUALITY,
     videoFormat = "horizontal",
     captionsAssPath = null,
     fps = 30,
+    timelineBlocks = [],
+    onProgress,
   } = opts;
   if (segments.length === 0) throw new Error("No segments to export");
 
-  const res = resolveExportResolution(resolution, videoFormat);
+  const inputCount = countExportFfmpegInputs(segments, !!musicPath, Boolean(music2Path));
+  if (inputCount > EXPORT_STAGED_INPUT_THRESHOLD) {
+    return concatBlocksWithAudioStaged(opts);
+  }
+
+  const encoding = resolveExportEncoding(resolution, quality, videoFormat);
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
+
+  onProgress?.(0.05, "Preparando encode do vídeo…");
 
   // Each segment uses 2 inputs (video + narration). Scene audio is added as an extra
   // input only for segments that actually have one.
@@ -163,29 +1114,51 @@ export async function concatBlocksWithAudio(opts: {
   });
 
   const hasMusic = !!musicPath;
+  const hasMusic2 = Boolean(music2Path);
   let musicInputIdx = -1;
+  let music2InputIdx = -1;
   if (hasMusic) {
     musicInputIdx = nextInput;
-    args.push("-stream_loop", "-1", "-i", musicPath!);
+    if (hasMusic2) {
+      args.push("-i", musicPath!);
+    } else {
+      args.push("-stream_loop", "-1", "-i", musicPath!);
+    }
+    nextInput += 1;
+  }
+  if (hasMusic2) {
+    music2InputIdx = nextInput;
+    args.push("-stream_loop", "-1", "-i", music2Path!);
     nextInput += 1;
   }
 
-  const scaleFilter =
-    `scale=${res.width}:${res.height}:force_original_aspect_ratio=decrease:flags=lanczos,` +
-    `pad=${res.width}:${res.height}:(ow-iw)/2:(oh-ih)/2:color=black,` +
-    `setsar=1,fps=${fps},format=yuv420p`;
+  const scaleFilter = buildExportScaleFilter(encoding, fps);
 
   const filterParts: string[] = [];
+  const totalVideoDuration = segments.reduce(
+    (sum, seg) => sum + safeSegmentDurationSeconds(seg.durationSeconds),
+    0,
+  );
+  const effectiveMusicSpan =
+    normalizeMusicSpanSeconds(musicSpanSeconds) ?? totalVideoDuration;
+  const musicFileStart = Math.max(0, musicStartSeconds);
+  const music2FileStart = Math.max(0, music2FileStartSeconds);
+  const music2TimelineStart = hasMusic2
+    ? music2TimelineStartSeconds ??
+      defaultMusic2TimelineStartSeconds(music1DurationSeconds ?? 0, musicFileStart)
+    : null;
   for (let i = 0; i < segments.length; i++) {
     const vIdx = i * 2;
     const aIdx = vIdx + 1;
     const seg = segments[i];
-    const dur = Math.max(0.5, seg.durationSeconds);
-    const narrationGain = effectiveNarrationGain({
-      blockVolume: seg.audioVolume,
-      trackVolume: narrationVolume,
-      masterVolume,
-    });
+    const dur = safeSegmentDurationSeconds(seg.durationSeconds);
+    const narrationGain = sanitizeGain(
+      effectiveNarrationGain({
+        blockVolume: seg.audioVolume,
+        trackVolume: narrationVolume,
+        masterVolume,
+      }),
+    );
     const audioStart = Math.max(0, seg.audioTrimStart ?? 0);
     // Loop/trim video and trim narration to the same block duration so concat is stable.
     filterParts.push(
@@ -196,11 +1169,13 @@ export async function concatBlocksWithAudio(opts: {
     );
     const sceneIdx = sceneInputIndex.get(i);
     if (sceneIdx !== undefined) {
-      const gain = effectiveSceneGain({
-        blockVolume: seg.sceneAudioVolume,
-        trackVolume: sceneVolume,
-        masterVolume,
-      });
+      const gain = sanitizeGain(
+        effectiveSceneGain({
+          blockVolume: seg.sceneAudioVolume,
+          trackVolume: sceneVolume,
+          masterVolume,
+        }),
+      );
       filterParts.push(
         `[${sceneIdx}:a]aresample=44100,aformat=channel_layouts=stereo,volume=${gain.toFixed(4)},atrim=duration=${dur},asetpts=PTS-STARTPTS[scene${i}]`,
       );
@@ -217,8 +1192,25 @@ export async function concatBlocksWithAudio(opts: {
     })
     .join("");
   filterParts.push(
-    `${concatInputs}concat=n=${segments.length}:v=1:a=1[outv][narration]`,
+    `${concatInputs}concat=n=${segments.length}:v=1:a=1[outv][outa]`,
   );
+
+  const finalAudioLabel = appendExportFinalMusicMix({
+    filterParts,
+    hasMusic,
+    musicInputIdx,
+    music2InputIdx,
+    hasMusic2,
+    musicFileStart,
+    music2FileStart,
+    music2TimelineStart,
+    music1DurationSeconds,
+    music2DurationSeconds,
+    mixDurationSeconds: Math.min(effectiveMusicSpan, totalVideoDuration),
+    musicVolume,
+    masterVolume,
+    timelineBlocks,
+  });
 
   let videoMapLabel = "outv";
   if (captionsAssPath) {
@@ -227,41 +1219,16 @@ export async function concatBlocksWithAudio(opts: {
     videoMapLabel = "outvc";
   }
 
-  if (hasMusic) {
-    const vol = effectiveMusicGain({ musicVolume, masterVolume });
-    filterParts.push(
-      `[${musicInputIdx}:a]aresample=44100,aformat=channel_layouts=stereo,volume=${vol.toFixed(4)}[bg]`,
-    );
-    filterParts.push(`[narration][bg]amix=inputs=2:duration=first:dropout_transition=0[outa]`);
-  }
-
   const filterComplex = filterParts.join(";");
+
+  onProgress?.(0.85, "Finalizando encode…");
 
   args.push("-filter_complex", filterComplex);
   args.push("-map", `[${videoMapLabel}]`);
-  if (hasMusic) {
-    args.push("-map", "[outa]");
-  } else {
-    args.push("-map", "[narration]");
-  }
-  args.push(
-    "-c:v",
-    "libx264",
-    "-preset",
-    res.preset,
-    "-crf",
-    String(res.crf),
-    "-pix_fmt",
-    "yuv420p",
-    "-c:a",
-    "aac",
-    "-b:a",
-    "192k",
-    "-shortest",
-    "-movflags",
-    "+faststart",
-    outputPath,
-  );
+  args.push("-map", `[${finalAudioLabel}]`);
+  args.push(...buildExportVideoEncodeArgs(encoding));
+  args.push(...buildExportAudioEncodeArgs(encoding));
+  args.push("-shortest", "-movflags", "+faststart", outputPath);
 
   return new Promise<void>((resolve, reject) => {
     const ffmpegBin = resolveFfmpegBin();
@@ -468,6 +1435,34 @@ function buildAtempoFilterChain(speed: number): string {
   }
   parts.push(`atempo=${remaining.toFixed(4)}`);
   return parts.join(",");
+}
+
+/** Slow down (or speed up) audio to match a new duration — for scene audio paired with slow-mo video. */
+export async function stretchAudioToDuration(
+  inputPath: string,
+  outputPath: string,
+  sourceSeconds: number,
+  targetSeconds: number,
+): Promise<void> {
+  if (!hasFfmpeg()) {
+    throw new Error("ffmpeg is required to stretch audio");
+  }
+  const tempo = sourceSeconds / Math.max(0.5, targetSeconds);
+  await fs.mkdir(path.dirname(outputPath), { recursive: true });
+  await runFfmpeg([
+    "-y",
+    "-i",
+    inputPath,
+    "-filter:a",
+    buildAtempoFilterChain(tempo),
+    "-t",
+    Math.max(0.5, targetSeconds).toFixed(3),
+    "-c:a",
+    "aac",
+    "-b:a",
+    "128k",
+    outputPath,
+  ]);
 }
 
 function runFfmpeg(args: string[]): Promise<void> {
@@ -695,11 +1690,47 @@ export async function extractAudioFromVideo(
   }
 }
 
+/** Low-res silent proxy for in-app preview — not used for export. */
+export async function createPreviewVideoFromFile(
+  inputPath: string,
+  outputPath: string,
+  opts: { maxHeight?: number; crf?: number } = {},
+): Promise<void> {
+  if (!hasFfmpeg()) {
+    throw new Error("ffmpeg is required to create preview video");
+  }
+
+  const maxHeight = Math.max(144, opts.maxHeight ?? 360);
+  const crf = opts.crf ?? 34;
+
+  await fs.mkdir(path.dirname(outputPath), { recursive: true });
+  await runFfmpeg([
+    "-y",
+    "-i",
+    inputPath,
+    "-an",
+    "-vf",
+    `scale=-2:min(${maxHeight},ih):flags=fast_bilinear`,
+    "-c:v",
+    "libx264",
+    "-preset",
+    "veryfast",
+    "-crf",
+    String(crf),
+    "-pix_fmt",
+    "yuv420p",
+    "-movflags",
+    "+faststart",
+    outputPath,
+  ]);
+}
+
 /** Trim or loop a silent video clip to an exact target duration (seconds). */
 export async function fitVideoToDuration(
   inputPath: string,
   outputPath: string,
   targetSeconds: number,
+  mode: "loop" | "slow" = "loop",
 ): Promise<void> {
   if (!hasFfmpeg()) {
     throw new Error("ffmpeg is required to match video length to narration");
@@ -740,6 +1771,27 @@ export async function fitVideoToDuration(
 
   if (sourceDuration > target + 0.05) {
     await runFfmpeg(["-y", "-i", inputPath, "-t", target.toFixed(3), ...encodeArgs, outputPath]);
+    return;
+  }
+
+  if (mode === "slow" && sourceDuration > 0) {
+    const stretch = target / sourceDuration;
+    if (stretch > 2.001) {
+      throw new Error(
+        `Clip too short for slow motion (${sourceDuration.toFixed(1)}s → ${target.toFixed(1)}s). Use loop instead.`,
+      );
+    }
+    await runFfmpeg([
+      "-y",
+      "-i",
+      inputPath,
+      "-vf",
+      `setpts=${stretch.toFixed(6)}*PTS`,
+      "-t",
+      target.toFixed(3),
+      ...encodeArgs,
+      outputPath,
+    ]);
     return;
   }
 

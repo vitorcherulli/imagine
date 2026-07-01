@@ -3,7 +3,11 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "@/lib/db";
 import { tryUser } from "@/lib/auth";
-import { scriptDraftNotesSchema } from "@/lib/script-studio";
+import {
+  sanitizeScriptDraftNotesForApi,
+  scriptDraftNotesSchema,
+  type ScriptDraftNotes,
+} from "@/lib/script-studio";
 import {
   clearScriptDraft,
   ensureScriptVersionsBackfill,
@@ -50,7 +54,7 @@ const putSchema = z.object({
   status: z.enum(["none", "draft", "applied"]).optional(),
   /** Create a named checkpoint version (manual save). */
   checkpoint: z.boolean().optional(),
-  versionSource: z.enum(["paste", "manual_checkpoint"]).optional(),
+  versionSource: z.enum(["paste", "manual_checkpoint", "autosave"]).optional(),
 });
 
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
@@ -75,7 +79,9 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   try {
     const result = await saveScriptDraft(project, {
       script: parsed.data.script,
-      notes: parsed.data.notes,
+      notes: parsed.data.notes
+        ? sanitizeScriptDraftNotesForApi(parsed.data.notes as ScriptDraftNotes)
+        : undefined,
       status: parsed.data.status,
       versionSource,
       versionSummary:
@@ -83,7 +89,9 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
           ? "Pasted from clipboard"
           : versionSource === "manual_checkpoint"
             ? "Manual checkpoint"
-            : null,
+            : versionSource === "autosave"
+              ? "Auto-saved"
+              : null,
     });
 
     const versions = await listScriptVersionMeta(

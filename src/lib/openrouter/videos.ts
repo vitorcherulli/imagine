@@ -11,6 +11,8 @@ export interface VideoSubmitInput {
   aspect_ratio?: string;
   resolution?: string;
   model?: string;
+  /** OpenRouter generate_audio — omit for provider default. */
+  generateAudio?: boolean;
   frame_images?: FrameImageInput[];
 }
 
@@ -27,6 +29,10 @@ export interface VideoStatus {
   signed_urls?: string[];
   error?: string;
   progress?: number;
+  usage?: {
+    cost?: number | null;
+    is_byok?: boolean;
+  };
 }
 
 function toApiFrameImages(frames: FrameImageInput[]) {
@@ -41,7 +47,8 @@ export async function submitVideo(input: VideoSubmitInput): Promise<VideoSubmitR
   const model = input.model ?? OPENROUTER_MODELS.video;
   console.info(
     `[video] model=${model} duration=${input.duration ?? "default"}s ` +
-      `aspect=${input.aspect_ratio ?? "default"} firstFrame=${input.frame_images?.length ?? 0}`,
+      `aspect=${input.aspect_ratio ?? "default"} firstFrame=${input.frame_images?.length ?? 0} ` +
+      `audio=${input.generateAudio === undefined ? "default" : input.generateAudio}`,
   );
   const body: Record<string, unknown> = {
     model,
@@ -50,6 +57,7 @@ export async function submitVideo(input: VideoSubmitInput): Promise<VideoSubmitR
   if (input.duration) body.duration = input.duration;
   if (input.aspect_ratio) body.aspect_ratio = input.aspect_ratio;
   if (input.resolution) body.resolution = input.resolution;
+  if (input.generateAudio !== undefined) body.generate_audio = input.generateAudio;
   if (input.frame_images && input.frame_images.length > 0) {
     body.frame_images = toApiFrameImages(input.frame_images);
   }

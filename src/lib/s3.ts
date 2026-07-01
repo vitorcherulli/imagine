@@ -92,6 +92,7 @@ export function isRemoteMediaUrl(publicUrl: string): boolean {
 export function mimeFromFilename(filename: string): string {
   const ext = path.extname(filename).slice(1).toLowerCase();
   if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  if (ext === "png") return "image/png";
   if (ext === "webp") return "image/webp";
   if (ext === "gif") return "image/gif";
   if (ext === "svg") return "image/svg+xml";
@@ -168,4 +169,24 @@ export async function deleteObjectsByPrefix(prefix: string): Promise<void> {
     }
     token = list.IsTruncated ? list.NextContinuationToken : undefined;
   } while (token);
+}
+
+export async function listObjectKeysByPrefix(prefix: string): Promise<string[]> {
+  let token: string | undefined;
+  const normalized = normalizeObjectKey(prefix);
+  const keys: string[] = [];
+  do {
+    const list = await getS3Client().send(
+      new ListObjectsV2Command({
+        Bucket: s3Bucket(),
+        Prefix: normalized,
+        ContinuationToken: token,
+      }),
+    );
+    for (const obj of list.Contents ?? []) {
+      if (obj.Key) keys.push(obj.Key);
+    }
+    token = list.IsTruncated ? list.NextContinuationToken : undefined;
+  } while (token);
+  return keys;
 }

@@ -26,6 +26,8 @@ stop_server() {
   fi
   rm -f "$SUPERVISOR_PID_FILE"
   fuser -k "${PORT}/tcp" 2>/dev/null || true
+  fuser -k 3001/tcp 3002/tcp 2>/dev/null || true
+  pkill -f "next dev" 2>/dev/null || true
   sleep 1
 }
 

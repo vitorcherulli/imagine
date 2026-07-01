@@ -1,11 +1,14 @@
 import type { Avatar, Project } from "./db/schema";
-import { buildCutPacePromptLines, normalizeNarrationMode } from "./cut-pace";
+import { buildCutPacePromptLines } from "./cut-pace";
 import { normalizeProjectIdentity } from "./project-identity";
-import { getVisualFramingHint, getVideoFormatSpec } from "./video-format";
 import {
-  ENGLISH_ONLY_GENERATION_LINE,
-  ENGLISH_VISUAL_PROMPT_LINE,
-} from "./generation-language";
+  normalizeProjectScriptLanguage,
+  scriptLanguageGenerationLine,
+  scriptLanguageNarrationOnlyLine,
+  scriptLanguageOutputCode,
+  type ProjectScriptLanguage,
+} from "./project-language";
+import { getVisualFramingHint, getVideoFormatSpec } from "./video-format";
 
 /** Extra guidance when genre needs platform-safe provocative framing. */
 export function getGenreStoryHint(genre: string): string | null {
@@ -31,17 +34,19 @@ export interface BlockDraft {
 }
 
 export function buildStorySystemPrompt(
-  project: Pick<Project, "cutPace" | "narrationMode" | "targetDurationSeconds">,
+  project: Pick<
+    Project,
+    "cutPace" | "narrationMode" | "targetDurationSeconds" | "scriptLanguage"
+  >,
   hasCharacters: boolean,
   primaryCharacterName?: string | null,
 ) {
+  const language = normalizeProjectScriptLanguage(project.scriptLanguage);
   const base = [
     "You are an expert screenwriter and video story-board author for short-form online videos.",
     "Given a project brief, output a JSON object with a 'blocks' array of narrative blocks.",
     "Each block has: segmentType ('intro' | 'development' | 'climax' | 'resolution'), narrativeText (the voice-over script, complete sentences — or empty string for visual-only cuts), visualPrompt (concise cinematographic description of the visual to generate), durationSeconds (integer), locationTag (short snake_case identifier for THIS scene's unique setting, e.g. garden_gate, purple_tunnel, sunlit_meadow).",
-    ...(normalizeNarrationMode(project.narrationMode) === "continuous"
-      ? ["Each block may also have narrationGroupId (string): blocks sharing the same id form one narration unit with multiple visual cuts."]
-      : []),
+    "Each block may also have narrationGroupId (string): blocks sharing the same id form one narration unit with multiple visual cuts.",
   ];
   if (primaryCharacterName) {
     base.push(
@@ -58,8 +63,7 @@ export function buildStorySystemPrompt(
   }
   base.push(
     "Constraints:",
-    ENGLISH_ONLY_GENERATION_LINE,
-    ENGLISH_VISUAL_PROMPT_LINE,
+    scriptLanguageNarrationOnlyLine(language),
     ...buildCutPacePromptLines(project),
     "- visualPrompt must NOT contain quotation marks or new lines; it should describe lighting, camera, subjects, action, mood for THIS specific scene.",
     "- Framing: follow the project's video_format in the brief (horizontal 16:9 widescreen vs vertical 9:16 mobile portrait). Compose every shot for that aspect ratio.",
@@ -92,8 +96,8 @@ export function buildStoryUserPrompt(
       visual_framing: getVisualFramingHint(project.videoFormat),
       target_total_duration_seconds: project.targetDurationSeconds,
       cut_pace: project.cutPace ?? "balanced",
-      narration_mode: project.narrationMode ?? "per_scene",
-      output_language: "en",
+      narration_mode: "continuous",
+      output_language: scriptLanguageOutputCode(normalizeProjectScriptLanguage(project.scriptLanguage)),
       ...(primaryAvatar
         ? {
             primary_character: {
@@ -115,11 +119,11 @@ export function buildStoryUserPrompt(
   );
 }
 
-export function buildSuggestionSystemPrompt() {
+export function buildSuggestionSystemPrompt(language: ProjectScriptLanguage = "en") {
   return [
     "You are a creative story-idea generator for online short videos.",
-    ENGLISH_ONLY_GENERATION_LINE,
-    "Given a genre, visual style and target duration, output JSON: { ideas: [ { title, summary } x3 ] }.",
+    scriptLanguageGenerationLine(language),
+    "Given a genre, visual style and target duration, output JSON: { ideas: [ { title, summary } x5 ] }.",
     "When project_identity is provided, ideas must fit that fixed series/brand DNA and feel like episodes in the same line.",
     "Each summary is 2-3 sentences. Keep it punchy and clearly differentiated.",
     "Respond ONLY with the JSON object.",
@@ -134,18 +138,185 @@ export function buildSuggestionUserPrompt(input: {
   videoFormat?: string;
   projectIdentity?: string;
   projectDnaId?: string | null;
+  scriptLanguage?: ProjectScriptLanguage;
 }) {
   const genreHint = getGenreStoryHint(input.genre);
   const identity = normalizeProjectIdentity(input.projectIdentity);
+  const language = normalizeProjectScriptLanguage(input.scriptLanguage);
   const payload = {
     ...input,
     ...(identity ? { project_identity: identity } : {}),
     ...(genreHint ? { genre_guidance: genreHint } : {}),
-    output_language: "en",
+    output_language: scriptLanguageOutputCode(language),
   };
   delete (payload as { projectIdentity?: string }).projectIdentity;
   delete (payload as { projectDnaId?: string | null }).projectDnaId;
   return JSON.stringify(payload, null, 2);
+}
+
+export function buildTrendQuerySystemPrompt(): string {
+  return [
+    "You plan web searches to discover what is trending RIGHT NOW for short-form video ideas.",
+    "Input is JSON: { genre, visual_style, voice_tone, video_format?, project_identity?, output_language, today_iso, month_year_label }.",
+    "Output STRICT JSON: { queries: string[] }.",
+    "Rules:",
+    "- queries: exactly 3 search strings for breaking news / viral moments from the LAST 24–48 HOURS.",
+    "- Include today_iso or month_year_label in at least one query (e.g. 'travel news June 2026 today').",
+    "- Prefer: 'breaking', 'today', 'this week', 'viral now' — NOT annual roundups or '2025 trends' style evergreen lists.",
+    "- Mix news queries and YouTube/social queries (e.g. 'site:youtube.com {topic} viral this week').",
+    "- Match output_language region (Brazil for pt, Spain/LatAm for es).",
+    "- Be specific to genre and project_identity.",
+    "Respond ONLY with the JSON object.",
+  ].join("\n");
+}
+
+export function buildTrendQueryUserPrompt(input: {
+  genre: string;
+  visualStyle: string;
+  voiceTone: string;
+  videoFormat?: string;
+  projectIdentity?: string;
+  scriptLanguage?: ProjectScriptLanguage;
+  todayIso?: string;
+  monthYearLabel?: string;
+}): string {
+  const genreHint = getGenreStoryHint(input.genre);
+  const identity = normalizeProjectIdentity(input.projectIdentity);
+  const language = normalizeProjectScriptLanguage(input.scriptLanguage);
+  return JSON.stringify(
+    {
+      genre: input.genre,
+      visual_style: input.visualStyle,
+      voice_tone: input.voiceTone,
+      video_format: input.videoFormat ?? "horizontal",
+      today_iso: input.todayIso,
+      month_year_label: input.monthYearLabel,
+      ...(identity ? { project_identity: identity } : {}),
+      ...(genreHint ? { genre_guidance: genreHint } : {}),
+      output_language: scriptLanguageOutputCode(language),
+    },
+    null,
+    2,
+  );
+}
+
+export function buildTrendSynthesisSystemPrompt(language: ProjectScriptLanguage = "en"): string {
+  return [
+    "You turn FRESH web search snippets into short-video story pitches about what is happening NOW.",
+    scriptLanguageGenerationLine(language),
+    "Input is JSON: { genre, visual_style, voice_tone, target_duration_seconds, video_format?, project_identity?, today_iso, month_year_label, freshness_window, search_results }.",
+    "Output STRICT JSON: { trends: [ { title, summary, trend_topic, source_url?, source_title?, source_type? } x5 ] }.",
+    "Rules:",
+    "- trends: exactly 5 distinct pitches grounded in search_results — only CURRENT stories (last 24–72h).",
+    "- REJECT last year's annual roundups, undated '2025 trends' listicles, and evergreen guides unless the snippet date says today/this week.",
+    "- title: catchy episode title — must feel timely THIS WEEK, not a retrospective.",
+    "- summary: 2-3 sentences — what broke recently + hook for viewers now.",
+    "- trend_topic: short label (e.g. 'Protesta hoje', 'Lançamento Apple').",
+    "- source_url/source_title: cite the freshest matching snippet.",
+    "- source_type: news | search | youtube.",
+    "- When project_identity is provided, every pitch must fit that series/brand.",
+    "Respond ONLY with the JSON object.",
+  ].join("\n");
+}
+
+export function buildTrendSynthesisUserPrompt(input: {
+  genre: string;
+  visualStyle: string;
+  voiceTone: string;
+  targetDurationSeconds: number;
+  videoFormat?: string;
+  projectIdentity?: string;
+  scriptLanguage?: ProjectScriptLanguage;
+  todayIso?: string;
+  monthYearLabel?: string;
+  freshnessWindow?: string;
+  searchResults: Array<{
+    query: string;
+    snippets: Array<{
+      title: string;
+      url: string;
+      content: string;
+      sourceType?: string;
+      publishedLabel?: string;
+    }>;
+  }>;
+}): string {
+  const genreHint = getGenreStoryHint(input.genre);
+  const identity = normalizeProjectIdentity(input.projectIdentity);
+  const language = normalizeProjectScriptLanguage(input.scriptLanguage);
+  return JSON.stringify(
+    {
+      genre: input.genre,
+      visual_style: input.visualStyle,
+      voice_tone: input.voiceTone,
+      target_duration_seconds: input.targetDurationSeconds,
+      video_format: input.videoFormat ?? "horizontal",
+      today_iso: input.todayIso,
+      month_year_label: input.monthYearLabel,
+      freshness_window: input.freshnessWindow ?? "24h",
+      ...(identity ? { project_identity: identity } : {}),
+      ...(genreHint ? { genre_guidance: genreHint } : {}),
+      output_language: scriptLanguageOutputCode(language),
+      search_results: input.searchResults,
+    },
+    null,
+    2,
+  );
+}
+
+export function buildTopPicksSystemPrompt(language: ProjectScriptLanguage = "en"): string {
+  return [
+    "You are a senior creative producer picking the best short-video ideas from a mixed list.",
+    scriptLanguageGenerationLine(language),
+    "Input is JSON: { genre, visual_style, voice_tone, target_duration_seconds, video_format?, project_identity?, candidates }.",
+    "Each candidate has: id, source (ai|trend), title, summary, and optional trend fields.",
+    "Output STRICT JSON: { picks: [ { rank, candidate_id, rationale } x3 ] }.",
+    "Rules:",
+    "- picks: exactly 3 entries with rank 1, 2, 3 (1 = strongest recommendation).",
+    "- candidate_id MUST match an id from candidates exactly — no invented ideas.",
+    "- Use each candidate at most once.",
+    "- Balance creative fit (DNA, genre, style, tone, duration) with timeliness when source=trend.",
+    "- rank 1 should be the single best video to make RIGHT NOW — explain why in rationale (1-2 sentences).",
+    "- rationale: short producer note in output_language — why this beat the others.",
+    "- Prefer at least one trend pick when trends are timely and on-brand.",
+    "Respond ONLY with the JSON object.",
+  ].join("\n");
+}
+
+export function buildTopPicksUserPrompt(input: {
+  genre: string;
+  visualStyle: string;
+  voiceTone: string;
+  targetDurationSeconds: number;
+  videoFormat?: string;
+  projectIdentity?: string;
+  scriptLanguage?: ProjectScriptLanguage;
+  candidates: Array<{
+    id: string;
+    source: string;
+    title: string;
+    summary: string;
+    trend_topic?: string;
+  }>;
+}): string {
+  const genreHint = getGenreStoryHint(input.genre);
+  const identity = normalizeProjectIdentity(input.projectIdentity);
+  const language = normalizeProjectScriptLanguage(input.scriptLanguage);
+  return JSON.stringify(
+    {
+      genre: input.genre,
+      visual_style: input.visualStyle,
+      voice_tone: input.voiceTone,
+      target_duration_seconds: input.targetDurationSeconds,
+      video_format: input.videoFormat ?? "horizontal",
+      ...(identity ? { project_identity: identity } : {}),
+      ...(genreHint ? { genre_guidance: genreHint } : {}),
+      output_language: scriptLanguageOutputCode(language),
+      candidates: input.candidates,
+    },
+    null,
+    2,
+  );
 }
 
 export function buildMusicPromptDefault(project: Project, resolvedIdentity?: string): string {
@@ -166,20 +337,22 @@ export function buildYoutubeMetadataSystemPrompt(
   hasCharacter = false,
   videoFormat: Project["videoFormat"] = "horizontal",
   thumbnailMode: "with_title" | "image_only" = "with_title",
+  language: ProjectScriptLanguage = "en",
 ) {
   const spec = getVideoFormatSpec(videoFormat);
   const platform =
     spec.id === "vertical"
       ? "Instagram Reels, YouTube Shorts and TikTok"
       : "YouTube";
+  const langLabel =
+    language === "pt" ? "Brazilian Portuguese" : language === "es" ? "Spanish" : "English";
   const lines = [
     `You produce upload metadata and cover art prompts for ${platform}.`,
-    ENGLISH_ONLY_GENERATION_LINE,
-    ENGLISH_VISUAL_PROMPT_LINE,
+    scriptLanguageNarrationOnlyLine(language),
     `Output JSON: { titles: string[5], description: string, tags: string[10-15], thumbnailPrompt: string }.`,
-    "- titles: 5 SEO+CTR-optimized titles in English, each 30-65 chars, no clickbait emojis, no quotes.",
-    "- description: 600-900 chars in English, includes a hook in the first 2 lines, then a brief synopsis, then a TIMESTAMPS section using the provided block list (format 'mm:ss Title'), then 3-5 English hashtags on the last line.",
-    "- tags: comma-friendly short English keywords (no '#'), specific to the topic.",
+    `- titles: 5 SEO+CTR-optimized titles in ${langLabel}, each 30-65 chars, no clickbait emojis, no quotes.`,
+    `- description: 600-900 chars in ${langLabel}, includes a hook in the first 2 lines, then a brief synopsis, then a TIMESTAMPS section using the provided block list (format 'mm:ss Title'), then 3-5 ${langLabel} hashtags on the last line.`,
+    `- tags: comma-friendly short ${langLabel} keywords (no '#'), specific to the topic.`,
   ];
   if (thumbnailMode === "image_only") {
     lines.push(

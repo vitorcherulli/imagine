@@ -1,4 +1,5 @@
-import { OPENROUTER_MODELS, openRouterFetch } from "./client";
+import { OPENROUTER_MODELS, openRouterFetch, formatOpenRouterError } from "./client";
+import { imageModelUsesTextModality } from "@/lib/project-api-models";
 
 export interface ImageGenInput {
   prompt: string;
@@ -44,7 +45,7 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenResul
   const body: Record<string, unknown> = {
     model,
     messages: [{ role: "user", content: userContent }],
-    modalities: ["image"],
+    modalities: imageModelUsesTextModality(model) ? ["image", "text"] : ["image"],
     stream: false,
   };
   const image_config: Record<string, unknown> = {};
@@ -55,7 +56,7 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenResul
   const res = await openRouterFetch("/chat/completions", { method: "POST", json: body });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`OpenRouter image error ${res.status}: ${text.slice(0, 400)}`);
+    throw new Error(formatOpenRouterError(res.status, text));
   }
   const json = (await res.json()) as ChatImageResponse;
   if (json.error?.message) throw new Error(`Image error: ${json.error.message}`);

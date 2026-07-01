@@ -16,10 +16,12 @@ import {
   LLM_MODEL_OPTIONS,
   TTS_MODEL_OPTIONS,
   VIDEO_MODEL_OPTIONS,
+  VIDEO_CLIP_AUDIO_OPTIONS,
   getDefaultTtsVoiceForModel,
   isGeminiTtsModel,
   isGrokTtsModel,
   isElevenLabsTtsModel,
+  isVeoVideoModel,
   videoLabelForModel,
   videoOpenRouterBillingForModel,
   voiceLabelForModel,
@@ -27,6 +29,7 @@ import {
   type ProjectApiModels,
 } from "@/lib/project-api-models";
 import { FavoriteVoiceSelect } from "@/components/FavoriteVoiceSelect";
+import { VideoModelCostHint } from "@/components/VideoModelCostHint";
 
 const API_SETTINGS_COLLAPSED_KEY = "imagine-api-settings-collapsed";
 
@@ -50,39 +53,30 @@ function writeApiSettingsCollapsed(collapsed: boolean): void {
   }
 }
 
-interface Props {
+export type ApiSettingsCategory = "story" | "image" | "video" | "voice";
+
+interface CategoryFieldsProps {
+  category: ApiSettingsCategory;
   value: ProjectApiModels;
   onChange: (patch: Partial<ProjectApiModels>) => void;
-  /** Inline section on the create form */
   variant?: "inline" | "dialog";
+  showFavoriteChips?: boolean;
 }
 
-export function ProjectApiSettings({ value, onChange, variant = "inline" }: Props) {
+export function ProjectApiCategoryFields({
+  category,
+  value,
+  onChange,
+  variant = "dialog",
+  showFavoriteChips = true,
+}: CategoryFieldsProps) {
+  const selectClass = variant === "inline" ? "h-8 text-xs" : "h-9 text-xs";
   const voiceOptions = voiceOptionsForTtsModel(value.ttsModel);
   const videoBillingName = videoOpenRouterBillingForModel(value.videoModel);
-  const isInline = variant === "inline";
-  const defaultCollapsed = isInline;
-  const [collapsed, setCollapsed] = React.useState(defaultCollapsed);
 
-  React.useEffect(() => {
-    if (!isInline) return;
-    setCollapsed(readApiSettingsCollapsed(defaultCollapsed));
-  }, [isInline, defaultCollapsed]);
-
-  function toggleCollapsed() {
-    setCollapsed((prev) => {
-      const next = !prev;
-      if (isInline) writeApiSettingsCollapsed(next);
-      return next;
-    });
-  }
-
-  const selectClass = variant === "inline" ? "h-8 text-xs" : "h-9 text-xs";
-  const summary = apiModelsSummary(value);
-
-  const fields = (
-    <div className="grid grid-cols-2 gap-2">
-      <Field label="Story">
+  if (category === "story") {
+    return (
+      <Field label="Story model">
         <Select value={value.llmModel} onValueChange={(v) => onChange({ llmModel: v })}>
           <SelectTrigger className={selectClass}>
             <SelectValue />
@@ -96,7 +90,12 @@ export function ProjectApiSettings({ value, onChange, variant = "inline" }: Prop
           </SelectContent>
         </Select>
       </Field>
-      <Field label="Image">
+    );
+  }
+
+  if (category === "image") {
+    return (
+      <Field label="Image model">
         <Select value={value.imageModel} onValueChange={(v) => onChange({ imageModel: v })}>
           <SelectTrigger className={selectClass}>
             <SelectValue />
@@ -110,34 +109,70 @@ export function ProjectApiSettings({ value, onChange, variant = "inline" }: Prop
           </SelectContent>
         </Select>
       </Field>
-      <Field label="Video">
-        <Select value={value.videoModel} onValueChange={(v) => onChange({ videoModel: v })}>
-          <SelectTrigger className={selectClass}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {VIDEO_MODEL_OPTIONS.map((o) => (
-              <SelectItem key={o.value} value={o.value}>
-                {o.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        {!collapsed && (
-          <p className="mt-1 text-2xs text-muted-foreground">
-            Clip length follows narration (4–15s), then ffmpeg fits to block duration.
-            {videoBillingName && (
-              <>
-                {" "}
-                OpenRouter usage shows <span className="font-medium">{videoBillingName}</span>{" "}
-                (slug <span className="font-mono">{value.videoModel}</span>) — that is{" "}
-                <span className="font-medium">Kling</span>, not Google Veo 3.1 (
-                <span className="font-mono">google/veo-3.1</span>).
-              </>
-            )}
-          </p>
-        )}
-      </Field>
+    );
+  }
+
+  if (category === "video") {
+    return (
+      <div className="space-y-2">
+        <Field label="Video model">
+          <Select value={value.videoModel} onValueChange={(v) => onChange({ videoModel: v })}>
+            <SelectTrigger className={selectClass}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {VIDEO_MODEL_OPTIONS.map((o) => (
+                <SelectItem key={o.value} value={o.value}>
+                  {o.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
+        <Field label="Clip audio">
+          <Select
+            value={value.videoClipAudio}
+            onValueChange={(v) =>
+              onChange({ videoClipAudio: v as "default" | "on" | "off" })
+            }
+          >
+            <SelectTrigger className={selectClass}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {VIDEO_CLIP_AUDIO_OPTIONS.map((o) => (
+                <SelectItem key={o.value} value={o.value}>
+                  {o.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
+        <VideoModelCostHint
+          videoModel={value.videoModel}
+          videoClipAudio={value.videoClipAudio}
+          className="pt-0.5"
+        />
+        <p className="text-2xs text-muted-foreground">
+          Clip length follows narration (
+          {isVeoVideoModel(value.videoModel) ? "4–8s for Veo" : "4–15s"}, then ffmpeg fits to block
+          duration). Veo and Kling cost less with{" "}
+          <span className="font-medium">Sem áudio no clip</span> when narration already covers sound (
+          <span className="font-mono">generate_audio: false</span> on OpenRouter).
+          {videoBillingName && (
+            <>
+              {" "}
+              OpenRouter usage shows <span className="font-medium">{videoBillingName}</span> (
+              <span className="font-mono">{value.videoModel}</span>).
+            </>
+          )}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
       <Field label="Voice API">
         <Select
           value={value.ttsModel}
@@ -162,43 +197,83 @@ export function ProjectApiSettings({ value, onChange, variant = "inline" }: Prop
           </SelectContent>
         </Select>
       </Field>
-      <Field label="Voice" className="col-span-2">
+      <Field label="Narrator voice">
         <FavoriteVoiceSelect
           ttsModel={value.ttsModel}
           value={value.ttsVoice}
           onValueChange={(v) => onChange({ ttsVoice: v })}
           options={voiceOptions}
           triggerClassName={selectClass}
-          showFavoriteChips={!collapsed}
+          showFavoriteChips={showFavoriteChips}
         />
-        {!collapsed && isGeminiTtsModel(value.ttsModel) && (
-          <p className="mt-1 text-2xs text-amber-600/90 dark:text-amber-400/90">
-            Gemini may block some scripts (Google safety filter). If generation fails, the app
-            auto-switches to Kokoro — or select Kokoro directly for fewer errors.
-          </p>
-        )}
-        {!collapsed && isGrokTtsModel(value.ttsModel) && (
-          <p className="mt-1 text-2xs text-muted-foreground">
-            Natural prosody, 20+ languages, speech tags like [pause] and [laugh]. ~$15/M chars on
-            OpenRouter.
-          </p>
-        )}
-        {!collapsed && isElevenLabsTtsModel(value.ttsModel) && (
-          <p className="mt-1 text-2xs text-muted-foreground">
-            Premium voices via your ElevenLabs account. Set{" "}
-            <span className="font-mono">ELEVENLABS_API_KEY</span> in .env.local. Supports Portuguese
-            (multilingual v2).
-          </p>
-        )}
-        {!collapsed &&
-          !isGeminiTtsModel(value.ttsModel) &&
-          !isGrokTtsModel(value.ttsModel) &&
-          !isElevenLabsTtsModel(value.ttsModel) && (
-          <p className="mt-1 text-2xs text-muted-foreground">
-            Reliable narration for story blocks. Voice follows tone when set to Auto.
-          </p>
-        )}
       </Field>
+      {isGeminiTtsModel(value.ttsModel) && (
+        <p className="text-2xs text-amber-600/90 dark:text-amber-400/90">
+          Gemini may block some scripts. If generation fails, try Kokoro.
+        </p>
+      )}
+      {isGrokTtsModel(value.ttsModel) && (
+        <p className="text-2xs text-muted-foreground">
+          Natural prosody, 20+ languages, speech tags like [pause] and [laugh].
+        </p>
+      )}
+      {isElevenLabsTtsModel(value.ttsModel) && (
+        <p className="text-2xs text-muted-foreground">
+          Set <span className="font-mono">ELEVENLABS_API_KEY</span> in .env.local for Portuguese.
+        </p>
+      )}
+    </div>
+  );
+}
+
+interface Props {
+  value: ProjectApiModels;
+  onChange: (patch: Partial<ProjectApiModels>) => void;
+  /** Inline section on the create form */
+  variant?: "inline" | "dialog";
+}
+
+export function ProjectApiSettings({ value, onChange, variant = "inline" }: Props) {
+  const isInline = variant === "inline";
+  const defaultCollapsed = isInline;
+  const [collapsed, setCollapsed] = React.useState(defaultCollapsed);
+
+  React.useEffect(() => {
+    if (!isInline) return;
+    setCollapsed(readApiSettingsCollapsed(defaultCollapsed));
+  }, [isInline, defaultCollapsed]);
+
+  function toggleCollapsed() {
+    setCollapsed((prev) => {
+      const next = !prev;
+      if (isInline) writeApiSettingsCollapsed(next);
+      return next;
+    });
+  }
+
+  const summary = apiModelsSummary(value);
+
+  const fields = (
+    <div className="grid grid-cols-2 gap-2">
+      <div className="col-span-2">
+        <ProjectApiCategoryFields
+          category="story"
+          value={value}
+          onChange={onChange}
+          variant={variant}
+        />
+      </div>
+      <ProjectApiCategoryFields category="image" value={value} onChange={onChange} variant={variant} />
+      <ProjectApiCategoryFields category="video" value={value} onChange={onChange} variant={variant} />
+      <div className="col-span-2">
+        <ProjectApiCategoryFields
+          category="voice"
+          value={value}
+          onChange={onChange}
+          variant={variant}
+          showFavoriteChips={!collapsed || !isInline}
+        />
+      </div>
     </div>
   );
 

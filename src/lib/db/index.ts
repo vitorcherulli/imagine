@@ -8,6 +8,7 @@ import * as sqliteSchema from "./schema";
 import * as pgSchema from "./schema-pg";
 import { databaseUrl, isPostgresUrl } from "./url";
 import { applySqliteSchemaHotfixes } from "./sqlite-hotfixes";
+import { applyPgSchemaHotfixes } from "./pg-hotfixes";
 
 const url = databaseUrl();
 const usePostgres = isPostgresUrl(url);
@@ -15,6 +16,9 @@ const usePostgres = isPostgresUrl(url);
 function createDb() {
   if (usePostgres) {
     const client = postgres(url);
+    void applyPgSchemaHotfixes(client).catch((err) => {
+      console.error("[db] PostgreSQL schema hotfixes failed:", err);
+    });
     return drizzlePostgres(client, { schema: pgSchema });
   }
 

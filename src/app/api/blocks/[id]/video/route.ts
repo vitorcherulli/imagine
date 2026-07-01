@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { tryUser } from "@/lib/auth";
 import { getBlockForUser, getLatestBlock, setBlockStatus } from "@/lib/block-helpers";
 import { generateBlockVideo } from "@/lib/block-video";
+import { repairInvalidKeyframeIfNeeded } from "@/lib/keyframe-repair";
 import { resolveProjectApiModels } from "@/lib/project-api-models";
 
 export const dynamic = "force-dynamic";
@@ -26,14 +27,28 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
     errorMessage: null,
     videoJobId: null,
     videoPollingUrl: null,
+    stockVideoId: null,
   });
 
   void (async () => {
     try {
       resolveProjectApiModels(owned.project);
       const latest = await getLatestBlock(params.id);
-      const block = latest ?? owned.block;
-      const { videoUrl, durationSeconds, sceneAudioUrl } = await generateBlockVideo({
+      let block = latest ?? owned.block;
+      const { block: repairedBlock, repaired } = await repairInvalidKeyframeIfNeeded(
+        owned.project,
+        block,
+      );
+      if (repaired) {
+        await setBlockStatus(params.id, {
+          keyframeUrl: repairedBlock.keyframeUrl,
+          status: repairedBlock.status,
+          errorMessage: null,
+        });
+        block = repairedBlock;
+      }
+      const { videoUrl, durationSeconds, sceneAudioUrl, openRouterCostUsd } =
+        await generateBlockVideo({
         project: owned.project,
         block,
       });
@@ -43,6 +58,7 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
         videoUrl,
         durationSeconds,
         sceneAudioUrl,
+        openRouterCostUsd,
         status: audioReady ? "ready" : "video_ready",
       });
     } catch (err) {
