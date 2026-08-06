@@ -4,7 +4,8 @@ import * as React from "react";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ProjectDnaPicker } from "@/components/ProjectDnaPicker";
-import type { ProjectDna } from "@/lib/db/schema";
+import { ScenarioPicker } from "@/components/ScenarioPicker";
+import type { ProjectDna, Scenario } from "@/lib/db/schema";
 import {
   EPISODE_STORY_HINT,
   EPISODE_STORY_LABEL,
@@ -14,20 +15,36 @@ import {
 interface Props {
   projectDnaId: string | null;
   projectDnaItems: ProjectDna[];
+  scenarioId?: string | null;
+  scenarioItems?: Scenario[];
   storyDescription: string;
-  onChange: (patch: { projectDnaId?: string | null; storyDescription?: string }) => void;
-  onSave: (patch: { projectDnaId?: string | null; storyDescription?: string }) => Promise<void>;
+  onChange: (patch: {
+    projectDnaId?: string | null;
+    scenarioId?: string | null;
+    storyDescription?: string;
+  }) => void;
+  onSave: (patch: {
+    projectDnaId?: string | null;
+    scenarioId?: string | null;
+    storyDescription?: string;
+  }) => Promise<void>;
 }
 
 export function ProjectBriefFields({
   projectDnaId,
   projectDnaItems,
+  scenarioId = null,
+  scenarioItems = [],
   storyDescription,
   onChange,
   onSave,
 }: Props) {
   const saveRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingRef = React.useRef<{ projectDnaId?: string | null; storyDescription?: string }>({});
+  const pendingRef = React.useRef<{
+    projectDnaId?: string | null;
+    scenarioId?: string | null;
+    storyDescription?: string;
+  }>({});
 
   React.useEffect(() => {
     return () => {
@@ -35,15 +52,23 @@ export function ProjectBriefFields({
     };
   }, []);
 
-  function queueSave(patch: { projectDnaId?: string | null; storyDescription?: string }) {
+  function queueSave(patch: {
+    projectDnaId?: string | null;
+    scenarioId?: string | null;
+    storyDescription?: string;
+  }) {
     pendingRef.current = { ...pendingRef.current, ...patch };
     onChange(patch);
     if (saveRef.current) clearTimeout(saveRef.current);
-    saveRef.current = setTimeout(() => {
-      const body = pendingRef.current;
-      pendingRef.current = {};
-      void onSave(body);
-    }, patch.projectDnaId !== undefined ? 0 : 500);
+    const immediate = patch.projectDnaId !== undefined || patch.scenarioId !== undefined;
+    saveRef.current = setTimeout(
+      () => {
+        const body = pendingRef.current;
+        pendingRef.current = {};
+        void onSave(body);
+      },
+      immediate ? 0 : 500,
+    );
   }
 
   return (
@@ -57,6 +82,17 @@ export function ProjectBriefFields({
             onChange={(id) => queueSave({ projectDnaId: id })}
           />
         </div>
+      </div>
+      <div>
+        <Label className="text-2xs">Scenario / environment</Label>
+        <p className="mb-1.5 text-[10px] text-muted-foreground">
+          Optional — reused as the setting across scenes. Override per scene in the block panel.
+        </p>
+        <ScenarioPicker
+          items={scenarioItems}
+          value={scenarioId}
+          onChange={(id) => queueSave({ scenarioId: id })}
+        />
       </div>
       <div>
         <Label className="text-2xs">{EPISODE_STORY_LABEL}</Label>

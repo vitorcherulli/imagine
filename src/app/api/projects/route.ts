@@ -2,13 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { createId } from "@paralleldrive/cuid2";
 import { db, schema } from "@/lib/db";
 import { tryUser } from "@/lib/auth";
-import { eq, desc } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { z } from "zod";
 import { projectApiModelsSchema, getDefaultApiModels } from "@/lib/project-api-models";
 import { serializeProjectAvatarIds } from "@/lib/project-avatars";
 import { assertOwnedProjectDna } from "@/lib/project-dna-server";
 import { getOwnedFolder } from "@/lib/project-library";
 import { normalizeProjectScriptLanguage } from "@/lib/project-language";
+import { dnaDefaultsFromProjectCreate } from "@/lib/dna-project-defaults";
 
 export const dynamic = "force-dynamic";
 
@@ -20,13 +21,14 @@ const createSchema = z
     genre: z.string().min(1).max(60),
     visualStyle: z.string().min(1).max(60),
     voiceTone: z.string().min(1).max(60),
-    targetDurationSeconds: z.number().int().min(30).max(1800),
+    targetDurationSeconds: z.number().int().min(15).max(1800),
     videoFormat: z.enum(["horizontal", "vertical"]).default("horizontal"),
     cutPace: z.enum(["calm", "balanced", "dynamic", "hyper"]).default("balanced"),
     narrationMode: z.enum(["continuous"]).default("continuous"),
     scriptLanguage: z.enum(["en", "pt", "es"]).default("en"),
     avatarId: z.string().nullable().optional(),
     avatarIds: z.array(z.string()).optional(),
+    scenarioId: z.string().nullable().optional(),
     folderId: z.string().nullable().optional(),
   })
   .merge(projectApiModelsSchema);
@@ -57,7 +59,7 @@ export async function POST(req: NextRequest) {
   const id = createId();
   const now = new Date();
   const defaults = getDefaultApiModels();
-  const { avatarId, avatarIds, projectDnaId, ...rest } = parsed.data;
+  const { avatarId, avatarIds, projectDnaId, scenarioId, ...rest } = parsed.data;
   if (projectDnaId) {
     const dna = await assertOwnedProjectDna(projectDnaId, userId);
     if (!dna) return NextResponse.json({ error: "Invalid project DNA" }, { status: 400 });
@@ -65,6 +67,16 @@ export async function POST(req: NextRequest) {
   if (parsed.data.folderId) {
     const folder = await getOwnedFolder(parsed.data.folderId, userId);
     if (!folder) return NextResponse.json({ error: "Invalid folder" }, { status: 400 });
+  }
+  let validScenarioId: string | null = null;
+  if (scenarioId) {
+    const [scenario] = await db
+      .select({ id: schema.scenarios.id })
+      .from(schema.scenarios)
+      .where(and(eq(schema.scenarios.id, scenarioId), eq(schema.scenarios.userId, userId)))
+      .limit(1);
+    if (!scenario) return NextResponse.json({ error: "Invalid scenario" }, { status: 400 });
+    validScenarioId = scenario.id;
   }
   const normalizedIds = avatarIds ?? (avatarId ? [avatarId] : []);
   const primaryId = avatarId ?? normalizedIds[0] ?? null;
@@ -79,12 +91,41 @@ export async function POST(req: NextRequest) {
     ttsVoice: rest.ttsVoice ?? defaults.ttsVoice,
     avatarId: primaryId,
     avatarIds: serializeProjectAvatarIds(normalizedIds),
+    scenarioId: validScenarioId,
     projectDnaId: projectDnaId ?? null,
     folderId: parsed.data.folderId ?? null,
     status: "draft",
     createdAt: now,
     updatedAt: now,
   });
+
+  // Remember the chosen settings on the DNA so the next new video prefills them.
+  if (projectDnaId) {
+    const learned = dnaDefaultsFromProjectCreate({
+      llmModel: rest.llmModel,
+      imageModel: rest.imageModel,
+      videoModel: rest.videoModel,
+      videoClipAudio: rest.videoClipAudio,
+      ttsModel: rest.ttsModel,
+      ttsVoice: rest.ttsVoice,
+      videoFormat: rest.videoFormat,
+      cutPace: rest.cutPace,
+      scriptLanguage: rest.scriptLanguage,
+      targetDurationSeconds: rest.targetDurationSeconds,
+    });
+    if (Object.keys(learned).length > 0) {
+      await db
+        .update(schema.projectDna)
+        .set({
+          ...learned,
+          genre: rest.genre,
+          visualStyle: rest.visualStyle,
+          voiceTone: rest.voiceTone,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.projectDna.id, projectDnaId));
+    }
+  }
 
   return NextResponse.json({ id });
 }

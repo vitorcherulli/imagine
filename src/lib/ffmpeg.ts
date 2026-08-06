@@ -110,6 +110,7 @@ import {
   type ExportResolution,
   type ExportResolutionId,
 } from "./export-resolutions";
+import { KEYFRAME_CANVAS_RESOLUTION, isImageSizeBelowProviderMinimum, minDimensionsForAspectRatio } from "./openrouter/image-resolution";
 import {
   DEFAULT_EXPORT_QUALITY,
   isExportQualityId,
@@ -259,12 +260,12 @@ function appendExportFinalMusicMix(opts: {
   return "outafinal";
 }
 
-/** Pixel canvas for keyframes / script imports — matches default 1080p export framing. */
+/** Pixel canvas for keyframes / script imports — 1440p meets Kling/OpenRouter first-frame minimums. */
 export function keyframeCanvasSize(videoFormat: VideoFormat | unknown = "horizontal"): {
   width: number;
   height: number;
 } {
-  const res = resolveExportResolution(DEFAULT_EXPORT_RESOLUTION, videoFormat);
+  const res = resolveExportResolution(KEYFRAME_CANVAS_RESOLUTION, videoFormat);
   return { width: res.width, height: res.height };
 }
 
@@ -515,6 +516,99 @@ export async function fitImageBufferToVideoFormat(
       );
     }
     throw err;
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/** Read pixel dimensions from PNG/JPEG headers (fast path; no ffprobe). */
+export function readImagePixelSize(buffer: Buffer): { width: number; height: number } | null {
+  if (buffer.length < 24) return null;
+
+  if (isPngBuffer(buffer)) {
+    const width = buffer.readUInt32BE(16);
+    const height = buffer.readUInt32BE(20);
+    if (width > 0 && height > 0) return { width, height };
+    return null;
+  }
+
+  if (isJpegBuffer(buffer)) {
+    let offset = 2;
+    while (offset + 9 < buffer.length) {
+      if (buffer[offset] !== 0xff) break;
+      const marker = buffer[offset + 1];
+      if (marker === 0xd8) {
+        offset += 2;
+        continue;
+      }
+      if (marker === 0xd9) break;
+      const segmentLength = buffer.readUInt16BE(offset + 2);
+      if (segmentLength < 2) break;
+      if (marker === 0xc0 || marker === 0xc2) {
+        const height = buffer.readUInt16BE(offset + 5);
+        const width = buffer.readUInt16BE(offset + 7);
+        if (width > 0 && height > 0) return { width, height };
+        return null;
+      }
+      offset += 2 + segmentLength;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Upscale (if needed) so image-to-video providers receive at least MIN_VIDEO_PROVIDER_FRAME_PIXELS.
+ * Uses cover fit into the target aspect ratio canvas.
+ */
+export async function prepareImageBufferForVideoFrame(
+  input: { buffer: Buffer; ext?: string },
+  aspectRatio: string = "16:9",
+): Promise<Buffer> {
+  const jpeg = await convertImageBufferToJpeg(input);
+  const dims = readImagePixelSize(jpeg);
+  const target = minDimensionsForAspectRatio(aspectRatio);
+
+  if (dims && !isImageSizeBelowProviderMinimum(dims.width, dims.height)) {
+    return jpeg;
+  }
+
+  if (!hasFfmpeg()) {
+    const label = `${target.width}×${target.height}`;
+    throw new Error(
+      `Keyframe image is too small for video generation (needs at least ${label} for ${aspectRatio}). ` +
+        "Regenerate the keyframe or install ffmpeg on the server.",
+    );
+  }
+
+  const tmpDir = path.join(
+    os.tmpdir(),
+    "imagine-video-frame-upscale",
+    `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+  );
+  await fs.mkdir(tmpDir, { recursive: true });
+  const inPath = path.join(tmpDir, "in.jpg");
+  const outPath = path.join(tmpDir, "out.jpg");
+
+  try {
+    await fs.writeFile(inPath, jpeg);
+    await runFfmpeg([
+      "-y",
+      "-i",
+      inPath,
+      "-vf",
+      buildCoverImageFilter(target.width, target.height),
+      "-frames:v",
+      "1",
+      "-q:v",
+      "2",
+      outPath,
+    ]);
+    const upscaled = await fs.readFile(outPath);
+    if (!isJpegBuffer(upscaled)) {
+      throw new Error(invalidKeyframeMessage(input.buffer));
+    }
+    return upscaled;
   } finally {
     await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -1349,6 +1443,47 @@ export async function getMediaDurationSeconds(filePath: string): Promise<number>
   }
 }
 
+/** Transcode any supported in-memory clip to MP3 (browser-friendly for dub preview). */
+export async function transcodeAudioBufferToMp3(input: {
+  buffer: Buffer;
+  filename: string;
+}): Promise<{ buffer: Buffer; filename: string }> {
+  const ext = path.extname(input.filename).toLowerCase() || ".mp3";
+  const outName = input.filename.replace(/\.[^.]+$/, "") + ".mp3";
+  if (ext === ".mp3" || input.buffer.length === 0) {
+    return { buffer: input.buffer, filename: outName };
+  }
+  if (!hasFfmpeg()) {
+    return { buffer: input.buffer, filename: input.filename };
+  }
+
+  const tmpDir = path.join(
+    os.tmpdir(),
+    "imagine-audio-mp3",
+    `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+  );
+  await fs.mkdir(tmpDir, { recursive: true });
+  const inPath = path.join(tmpDir, `in${ext}`);
+  const outPath = path.join(tmpDir, "out.mp3");
+  try {
+    await fs.writeFile(inPath, input.buffer);
+    await runFfmpeg([
+      "-y",
+      "-i",
+      inPath,
+      "-c:a",
+      "libmp3lame",
+      "-b:a",
+      "192k",
+      outPath,
+    ]);
+    const buffer = await fs.readFile(outPath);
+    return { buffer, filename: outName };
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 /** Measure duration of an in-memory audio clip (requires ffprobe). */
 export async function probeAudioBufferDurationSeconds(
   input: { buffer: Buffer; filename: string },
@@ -1807,3 +1942,387 @@ export async function fitVideoToDuration(
     outputPath,
   ]);
 }
+
+// -------------------------------------------------------------------------
+// Dubbing helpers
+// -------------------------------------------------------------------------
+
+/**
+ * Time-stretch (change speed while preserving pitch) an in-memory audio
+ * buffer to hit a target duration. Clamps stretch to [minRatio, maxRatio] to
+ * avoid distortion; returns the effective ratio applied and the stretched
+ * buffer.
+ */
+export async function stretchAudioBufferToTargetDuration(input: {
+  buffer: Buffer;
+  filename: string;
+  currentSeconds: number;
+  targetSeconds: number;
+  minRatio?: number;
+  maxRatio?: number;
+}): Promise<{
+  buffer: Buffer;
+  filename: string;
+  ratio: number;
+  durationSeconds: number;
+}> {
+  if (!hasFfmpeg()) throw new Error("ffmpeg is required to stretch audio");
+  const minRatio = input.minRatio ?? 0.98;
+  const maxRatio = input.maxRatio ?? 1.1;
+  const rawRatio =
+    input.currentSeconds > 0.05 && input.targetSeconds > 0.05
+      ? input.currentSeconds / input.targetSeconds
+      : 1;
+  const outName = input.filename.replace(/\.[^.]+$/, "") + ".mp3";
+
+  // TTS shorter than the slot — keep natural pace; never slow down to fill silence.
+  if (rawRatio < minRatio) {
+    const mp3 = await transcodeAudioBufferToMp3({
+      buffer: input.buffer,
+      filename: input.filename,
+    });
+    return {
+      buffer: mp3.buffer,
+      filename: mp3.filename,
+      ratio: 1,
+      durationSeconds: input.currentSeconds,
+    };
+  }
+
+  const ratio = Math.min(maxRatio, Math.max(minRatio, rawRatio));
+  if (Math.abs(ratio - 1) < 0.025) {
+    const mp3 = await transcodeAudioBufferToMp3({
+      buffer: input.buffer,
+      filename: input.filename,
+    });
+    return {
+      buffer: mp3.buffer,
+      filename: mp3.filename,
+      ratio: 1,
+      durationSeconds: input.currentSeconds,
+    };
+  }
+
+  const ext = path.extname(input.filename).toLowerCase() || ".mp3";
+  const tmpDir = path.join(
+    os.tmpdir(),
+    "imagine-dub-stretch",
+    `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+  );
+  await fs.mkdir(tmpDir, { recursive: true });
+  const inPath = path.join(tmpDir, `in${ext}`);
+  const outPath = path.join(tmpDir, "out.mp3");
+  const audioCodec = "libmp3lame";
+  const runStretch = async (filter: string) => {
+    await runFfmpeg([
+      "-y",
+      "-i",
+      inPath,
+      "-filter:a",
+      filter,
+      "-c:a",
+      audioCodec,
+      "-b:a",
+      "192k",
+      outPath,
+    ]);
+  };
+  try {
+    await fs.writeFile(inPath, input.buffer);
+    // rubberband preserves voice formants much better than atempo for dubbing.
+    try {
+      await runStretch(`rubberband=tempo=${ratio.toFixed(4)}`);
+    } catch {
+      await runStretch(buildAtempoFilterChain(ratio));
+    }
+    const buffer = await fs.readFile(outPath);
+    const durationSeconds =
+      (await getMediaDurationSeconds(outPath).catch(() => 0)) ||
+      input.currentSeconds / ratio;
+    return { buffer, filename: outName, ratio, durationSeconds };
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/**
+ * Render the final dubbed audio track by placing each dubbed segment at its
+ * `startSeconds` position on a silent timeline, optionally mixing the original
+ * audio at reduced gain behind the voice.
+ */
+export async function renderDubbedAudioTrack(input: {
+  totalDurationSeconds: number;
+  segments: Array<{
+    startSeconds: number;
+    /** Actual synthesized duration — used to detect and prevent overlap. */
+    durationSeconds?: number;
+    buffer: Buffer;
+    filename: string;
+  }>;
+  originalAudio?: { buffer: Buffer; filename: string; gain: number } | null;
+  outputFormat?: "mp3" | "m4a";
+  /** Minimum gap between consecutive dubs when anti-overlap kicks in. */
+  minGapSeconds?: number;
+}): Promise<{
+  buffer: Buffer;
+  filename: string;
+  durationSeconds: number;
+  /** Report which segments had to be pushed later to avoid overlapping. */
+  driftedSegments: number;
+}> {
+  if (!hasFfmpeg()) throw new Error("ffmpeg is required to render dubbed audio");
+
+  const outFormat = input.outputFormat ?? "mp3";
+  const tmpDir = path.join(
+    os.tmpdir(),
+    "imagine-dub-render",
+    `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+  );
+  await fs.mkdir(tmpDir, { recursive: true });
+
+  try {
+    // Sort by original start and compute effective (anti-overlap) starts.
+    const minGap = input.minGapSeconds ?? 0.05;
+    const orderedIndices = input.segments
+      .map((_, i) => i)
+      .sort(
+        (a, b) => input.segments[a].startSeconds - input.segments[b].startSeconds,
+      );
+
+    const effectiveStart = new Map<number, number>();
+    let cursor = 0;
+    let drifted = 0;
+    for (const idx of orderedIndices) {
+      const seg = input.segments[idx];
+      const desired = Math.max(0, seg.startSeconds);
+      const start = Math.max(desired, cursor);
+      if (start > desired + 0.02) drifted += 1;
+      effectiveStart.set(idx, start);
+      const duration = Math.max(0.1, seg.durationSeconds ?? 0.5);
+      cursor = start + duration + minGap;
+    }
+
+    const segPaths: Array<{ path: string; startSeconds: number }> = [];
+    for (let i = 0; i < input.segments.length; i += 1) {
+      const seg = input.segments[i];
+      const ext = path.extname(seg.filename).toLowerCase() || ".mp3";
+      const segPath = path.join(tmpDir, `seg${i}${ext}`);
+      await fs.writeFile(segPath, seg.buffer);
+      segPaths.push({
+        path: segPath,
+        startSeconds: effectiveStart.get(i) ?? seg.startSeconds,
+      });
+    }
+
+    const bgPath = input.originalAudio
+      ? path.join(
+          tmpDir,
+          `bg${path.extname(input.originalAudio.filename).toLowerCase() || ".mp3"}`,
+        )
+      : null;
+    if (bgPath && input.originalAudio) {
+      await fs.writeFile(bgPath, input.originalAudio.buffer);
+    }
+
+    const args: string[] = ["-y"];
+    const inputs: string[] = [];
+
+    for (const seg of segPaths) {
+      args.push("-i", seg.path);
+      inputs.push(seg.path);
+    }
+    if (bgPath) {
+      args.push("-i", bgPath);
+      inputs.push(bgPath);
+    }
+
+    const filterParts: string[] = [];
+    const streamsToMix: string[] = [];
+
+    for (let i = 0; i < segPaths.length; i += 1) {
+      const delayMs = Math.max(0, Math.round(segPaths[i].startSeconds * 1000));
+      const outLabel = `s${i}`;
+      filterParts.push(
+        `[${i}:a]adelay=${delayMs}|${delayMs},apad[${outLabel}]`,
+      );
+      streamsToMix.push(`[${outLabel}]`);
+    }
+
+    if (bgPath) {
+      const bgIndex = segPaths.length;
+      const gain = Math.min(
+        1,
+        Math.max(0, input.originalAudio?.gain ?? 0),
+      );
+      if (gain > 0.001) {
+        filterParts.push(`[${bgIndex}:a]volume=${gain.toFixed(3)}[bg]`);
+        streamsToMix.push(`[bg]`);
+      }
+    }
+
+    let outputLabel = "mix";
+    if (streamsToMix.length === 0) {
+      // No segments — output silence
+      const silencePath = path.join(tmpDir, `silence.${outFormat}`);
+      await runFfmpeg([
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        `anullsrc=cl=stereo:r=44100`,
+        "-t",
+        Math.max(1, input.totalDurationSeconds).toFixed(3),
+        outFormat === "mp3" ? "-c:a" : "-c:a",
+        outFormat === "mp3" ? "libmp3lame" : "aac",
+        "-b:a",
+        "192k",
+        silencePath,
+      ]);
+      const buf = await fs.readFile(silencePath);
+      return {
+        buffer: buf,
+        filename: `dub.${outFormat}`,
+        durationSeconds: input.totalDurationSeconds,
+        driftedSegments: 0,
+      };
+    }
+
+    if (streamsToMix.length === 1) {
+      outputLabel = streamsToMix[0].replace(/[\[\]]/g, "");
+    } else {
+      filterParts.push(
+        `${streamsToMix.join("")}amix=inputs=${streamsToMix.length}:duration=longest:normalize=0[${outputLabel}]`,
+      );
+    }
+
+    const outPath = path.join(tmpDir, `out.${outFormat}`);
+    args.push(
+      "-filter_complex",
+      filterParts.join(";"),
+      "-map",
+      `[${outputLabel}]`,
+      "-t",
+      Math.max(0.5, input.totalDurationSeconds).toFixed(3),
+      "-c:a",
+      outFormat === "mp3" ? "libmp3lame" : "aac",
+      "-b:a",
+      "192k",
+      outPath,
+    );
+
+    await runFfmpeg(args);
+    const buffer = await fs.readFile(outPath);
+    const durationSeconds =
+      (await getMediaDurationSeconds(outPath).catch(() => 0)) ||
+      input.totalDurationSeconds;
+    return {
+      buffer,
+      filename: `dub.${outFormat}`,
+      durationSeconds,
+      driftedSegments: drifted,
+    };
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/**
+ * Mux a dubbed audio track onto the source video (copy video codec, encode
+ * audio). Returns the resulting MP4 buffer.
+ */
+export async function muxDubbedAudioOntoVideo(input: {
+  video: { buffer: Buffer; filename: string };
+  audio: { buffer: Buffer; filename: string };
+}): Promise<{ buffer: Buffer; filename: string }> {
+  if (!hasFfmpeg()) throw new Error("ffmpeg is required to mux dubbed video");
+  const tmpDir = path.join(
+    os.tmpdir(),
+    "imagine-dub-mux",
+    `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+  );
+  await fs.mkdir(tmpDir, { recursive: true });
+  const videoExt =
+    path.extname(input.video.filename).toLowerCase() || ".mp4";
+  const audioExt =
+    path.extname(input.audio.filename).toLowerCase() || ".mp3";
+  const videoPath = path.join(tmpDir, `video${videoExt}`);
+  const audioPath = path.join(tmpDir, `audio${audioExt}`);
+  const outPath = path.join(tmpDir, `out.mp4`);
+  try {
+    await fs.writeFile(videoPath, input.video.buffer);
+    await fs.writeFile(audioPath, input.audio.buffer);
+    await runFfmpeg([
+      "-y",
+      "-i",
+      videoPath,
+      "-i",
+      audioPath,
+      "-map",
+      "0:v:0",
+      "-map",
+      "1:a:0",
+      "-c:v",
+      "copy",
+      "-c:a",
+      "aac",
+      "-b:a",
+      "192k",
+      "-shortest",
+      "-movflags",
+      "+faststart",
+      outPath,
+    ]);
+    const buffer = await fs.readFile(outPath);
+    return { buffer, filename: "dubbed.mp4" };
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/**
+ * Extract audio from an in-memory video buffer as MP3 (mono, 44.1kHz), which is
+ * the format expected by STT engines. Returns null if no audio stream.
+ */
+export async function extractAudioBufferFromVideoBuffer(input: {
+  buffer: Buffer;
+  filename: string;
+}): Promise<{ buffer: Buffer; filename: string; durationSeconds: number } | null> {
+  if (!hasFfmpeg()) return null;
+  const tmpDir = path.join(
+    os.tmpdir(),
+    "imagine-dub-extract",
+    `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+  );
+  await fs.mkdir(tmpDir, { recursive: true });
+  const videoExt = path.extname(input.filename).toLowerCase() || ".mp4";
+  const videoPath = path.join(tmpDir, `video${videoExt}`);
+  const outPath = path.join(tmpDir, `audio.mp3`);
+  try {
+    await fs.writeFile(videoPath, input.buffer);
+    if (!(await videoHasAudioStream(videoPath))) return null;
+    await runFfmpeg([
+      "-y",
+      "-i",
+      videoPath,
+      "-vn",
+      "-ac",
+      "1",
+      "-ar",
+      "44100",
+      "-c:a",
+      "libmp3lame",
+      "-b:a",
+      "128k",
+      outPath,
+    ]);
+    const buffer = await fs.readFile(outPath);
+    const durationSeconds =
+      (await getMediaDurationSeconds(outPath).catch(() => 0)) || 0;
+    return { buffer, filename: "source.mp3", durationSeconds };
+  } catch {
+    return null;
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+

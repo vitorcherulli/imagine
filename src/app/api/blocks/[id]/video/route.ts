@@ -47,7 +47,7 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
         });
         block = repairedBlock;
       }
-      const { videoUrl, durationSeconds, sceneAudioUrl, openRouterCostUsd } =
+      const { videoUrl, durationSeconds, sceneAudioUrl, openRouterCostUsd, videoAiModel, sceneAudioAiModel } =
         await generateBlockVideo({
         project: owned.project,
         block,
@@ -59,6 +59,8 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
         durationSeconds,
         sceneAudioUrl,
         openRouterCostUsd,
+        videoAiModel,
+        sceneAudioAiModel,
         status: audioReady ? "ready" : "video_ready",
       });
     } catch (err) {

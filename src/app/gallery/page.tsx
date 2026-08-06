@@ -10,11 +10,18 @@ export default async function GalleryPage() {
   const { userId } = await auth();
   if (!userId) return null;
 
-  const projects = await db
-    .select()
-    .from(schema.projects)
-    .where(eq(schema.projects.userId, userId))
-    .orderBy(desc(schema.projects.updatedAt));
+  const [projects, projectDna] = await Promise.all([
+    db
+      .select()
+      .from(schema.projects)
+      .where(eq(schema.projects.userId, userId))
+      .orderBy(desc(schema.projects.updatedAt)),
+    db
+      .select({ id: schema.projectDna.id, name: schema.projectDna.name })
+      .from(schema.projectDna)
+      .where(eq(schema.projectDna.userId, userId))
+      .orderBy(desc(schema.projectDna.updatedAt)),
+  ]);
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -28,7 +35,7 @@ export default async function GalleryPage() {
           </p>
         </div>
         <div className="min-h-0 flex-1">
-          <MediaLibraryExplorer />
+          <MediaLibraryExplorer dnas={projectDna} />
         </div>
       </main>
     </div>

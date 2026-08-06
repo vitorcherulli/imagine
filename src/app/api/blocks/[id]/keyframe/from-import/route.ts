@@ -9,6 +9,7 @@ import {
 } from "@/lib/media-library-server";
 import { downloadReferenceImageBuffer } from "@/lib/reference-image-download";
 import { deleteMediaByPublicUrl, saveBuffer, withCacheBuster } from "@/lib/storage";
+import { MEDIA_AI_SOURCE } from "@/lib/media-ai-label";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -64,6 +65,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
     await setBlockStatus(params.id, {
       keyframeUrl,
+      keyframeAiModel: MEDIA_AI_SOURCE.import,
       status: "image_ready",
       errorMessage: null,
     });

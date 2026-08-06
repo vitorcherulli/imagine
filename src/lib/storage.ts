@@ -4,13 +4,15 @@ import os from "node:os";
 import path from "node:path";
 import { createId } from "@paralleldrive/cuid2";
 import {
-  convertImageBufferToJpeg,
   detectImageExt,
   extractFirstFrameFromVideoBuffer,
   isJpegBuffer,
   isPngBuffer,
   isVideoMp4Buffer,
+  prepareImageBufferForVideoFrame,
+  readImagePixelSize,
 } from "./ffmpeg";
+import { isImageSizeBelowProviderMinimum } from "./openrouter/image-resolution";
 import { openRouterHeaders } from "./openrouter/client";
 import {
   deleteObjectsByPrefix,
@@ -225,6 +227,16 @@ export async function saveProjectDnaLogoBuffer(
   return writeBytes(key, buf);
 }
 
+export async function saveScenarioBuffer(
+  userId: string,
+  scenarioId: string,
+  filename: string,
+  buf: Buffer,
+): Promise<string> {
+  const key = path.posix.join("generated", "_scenarios", userId, scenarioId, filename);
+  return writeBytes(key, buf);
+}
+
 export async function saveGalleryBuffer(
   userId: string,
   filename: string,
@@ -285,17 +297,23 @@ function publicAppBaseUrl(): string | null {
 
 /**
  * Prepare a keyframe for Kling / OpenRouter image-to-video.
- * Prefers a public HTTPS media URL when the stored file is already JPEG/PNG;
- * otherwise returns a JPEG data URL (WebP/GIF and other formats are converted).
+ * Converts to JPEG when needed and upscales small images to provider minimums (~2560×1440 for 16:9).
  */
-export async function readImageAsVideoFrameUrl(publicUrl: string): Promise<string> {
+export async function readImageAsVideoFrameUrl(
+  publicUrl: string,
+  aspectRatio: string = "16:9",
+): Promise<string> {
   const pathOnly = publicUrl.split("?")[0]?.split("#")[0] ?? publicUrl;
   const urlExt = path.extname(pathOnly).toLowerCase() || undefined;
   const buf = await readMediaBuffer(publicUrl);
 
   if (isVideoMp4Buffer(buf)) {
     const jpeg = await extractFirstFrameFromVideoBuffer(buf);
-    return `data:image/jpeg;base64,${jpeg.toString("base64")}`;
+    const prepared = await prepareImageBufferForVideoFrame(
+      { buffer: jpeg, ext: ".jpg" },
+      aspectRatio,
+    );
+    return `data:image/jpeg;base64,${prepared.toString("base64")}`;
   }
 
   const detectedExt = detectImageExt(buf);
@@ -310,12 +328,23 @@ export async function readImageAsVideoFrameUrl(publicUrl: string): Promise<strin
     ((urlExt === ".jpg" || urlExt === ".jpeg") && isJpegBuffer(buf)) ||
     (urlExt === ".png" && isPngBuffer(buf));
 
-  if (base && pathOnly.startsWith("/api/media/") && storedIsVideoSafe && !needsConversion) {
-    return `${base}${pathOnly}`;
+  if (
+    base &&
+    pathOnly.startsWith("/api/media/") &&
+    storedIsVideoSafe &&
+    !needsConversion
+  ) {
+    const dims = readImagePixelSize(buf);
+    if (dims && !isImageSizeBelowProviderMinimum(dims.width, dims.height)) {
+      return `${base}${pathOnly}`;
+    }
   }
 
-  const jpeg = await convertImageBufferToJpeg({ buffer: buf, ext: detectedExt ?? urlExt });
-  return `data:image/jpeg;base64,${jpeg.toString("base64")}`;
+  const prepared = await prepareImageBufferForVideoFrame(
+    { buffer: buf, ext: detectedExt ?? urlExt },
+    aspectRatio,
+  );
+  return `data:image/jpeg;base64,${prepared.toString("base64")}`;
 }
 
 /** Load raw bytes for a project media URL (`/api/media/...` or local generated path). */
@@ -548,6 +577,24 @@ export async function deleteProjectDnaMedia(
 ): Promise<void> {
   await deleteMediaByPublicUrl(logoUrl);
   await deleteMediaPrefix(path.posix.join("generated", "_project-dna", userId, dnaId));
+}
+
+export async function deleteScenarioMedia(
+  userId: string,
+  scenarioId: string,
+  imageUrlsJson?: string | null,
+): Promise<void> {
+  if (imageUrlsJson) {
+    try {
+      const urls = JSON.parse(imageUrlsJson) as string[];
+      if (Array.isArray(urls)) {
+        await Promise.all(urls.map((url) => deleteMediaByPublicUrl(url)));
+      }
+    } catch {
+      // ignore bad json
+    }
+  }
+  await deleteMediaPrefix(path.posix.join("generated", "_scenarios", userId, scenarioId));
 }
 
 export async function deleteBlockMedia(projectId: string, blockId: string): Promise<void> {

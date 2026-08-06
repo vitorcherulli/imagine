@@ -1,3 +1,8 @@
+/**
+ * @deprecated The low-res preview proxy (`video_preview.mp4`) is no longer
+ * generated or played — the in-app player always uses the full `video.mp4`.
+ * These helpers are retained only for backward compatibility.
+ */
 export const VIDEO_PREVIEW_FILENAME = "video_preview.mp4";
 
 /** Preview playback — very low quality is fine; export uses `video.mp4`. */

@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { ClerkProvider } from "@clerk/nextjs";
+import { ClerkRootProvider } from "@/components/ClerkRootProvider";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { Toaster } from "@/components/ui/toaster";
 import { DEFAULT_APP_THEME } from "@/lib/app-theme";
@@ -23,10 +23,10 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: themeBootScript }} />
       </head>
       <body className="min-h-screen bg-background text-foreground" suppressHydrationWarning>
-        <ClerkProvider>
+        <ClerkRootProvider>
           <ThemeProvider>{children}</ThemeProvider>
           <Toaster />
-        </ClerkProvider>
+        </ClerkRootProvider>
       </body>
     </html>
   );

@@ -18,14 +18,29 @@ import {
   Volume2,
   Clock,
   UserRound,
+  Mountain,
+  Check,
+  Ban,
+  Layers,
   Link2,
   Unlink,
   FolderOpen,
   Clapperboard,
+  Camera,
   Globe2,
   Repeat,
   Timer,
+  Sparkles,
+  Eye,
+  ArrowUp,
+  ArrowDown,
+  Plane,
+  Glasses,
+  Users,
+  ZoomIn,
+  Maximize,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -44,12 +59,12 @@ import { useToast } from "@/components/ui/use-toast";
 import type { Block, SegmentType } from "@/components/timeline/types";
 import {
   avatarSelectValue,
+  scenarioSelectValue,
   SEGMENT_DOT_CLASSES,
   SEGMENT_TYPES,
 } from "@/components/timeline/types";
-import type { Avatar } from "@/lib/db/schema";
+import type { Avatar, Scenario } from "@/lib/db/schema";
 import { getVideoFormatSpec, type VideoFormat } from "@/lib/video-format";
-import { AvatarThumb } from "@/components/AvatarCastPicker";
 import type { BlockMediaField } from "@/lib/block-media";
 import { isVisualCutOnly } from "@/lib/cut-pace";
 import {
@@ -59,6 +74,9 @@ import {
   type NarrationJoinPlacement,
 } from "@/lib/narration-group-reorder";
 import {
+  CAMERA_ANGLE_OPTIONS,
+  cameraAngleLabel,
+  normalizeCameraAngle,
   normalizeVideoShotCount,
   VIDEO_SHOT_COUNT_OPTIONS,
   videoShotCountLabel,
@@ -82,6 +100,7 @@ import {
   videoShortTooltip,
   type VideoRefitMode,
 } from "@/lib/video-duration-mismatch";
+import { mediaAiBadgeLabel } from "@/lib/media-ai-label";
 
 interface Props {
   block: Block | null;
@@ -90,7 +109,14 @@ interface Props {
   avatars: Avatar[];
   projectAvatarId: string | null;
   projectAvatarName?: string | null;
+  scenarios?: Scenario[];
+  projectScenarioId?: string | null;
+  projectScenarioName?: string | null;
   videoFormat?: VideoFormat | string | null;
+  /** Project API models — fallback label when block has no stored ai model slug. */
+  projectImageModel?: string | null;
+  projectVideoModel?: string | null;
+  projectTtsModel?: string | null;
   onPatched: (
     id: string,
     patch: Partial<Block>,
@@ -110,42 +136,214 @@ interface Props {
   videoDurationAlerts?: Record<string, BlockVideoDurationAlert>;
 }
 
-function characterChoiceLabel(
-  choice: string,
-  avatars: Avatar[],
-  projectAvatarName?: string | null,
-): string {
-  if (choice === "__inherit__") {
-    return `Project default${projectAvatarName ? ` (${projectAvatarName})` : ""}`;
+function ScenarioChoiceCircles({
+  scenarios,
+  value,
+  projectScenarioId,
+  projectScenarioName,
+  disabled,
+  onChange,
+}: {
+  scenarios: Scenario[];
+  value: string;
+  projectScenarioId: string | null;
+  projectScenarioName: string | null;
+  disabled?: boolean;
+  onChange: (next: string) => void;
+}) {
+  const projectScenario = projectScenarioId
+    ? scenarios.find((s) => s.id === projectScenarioId) ?? null
+    : null;
+
+  const circle =
+    "relative flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full border-2 bg-muted transition-colors disabled:opacity-50";
+  const selectedRing = "border-accent ring-2 ring-accent/25";
+  const idleRing = "border-border hover:border-accent/40";
+
+  function Chip({
+    active,
+    onClick,
+    title,
+    children,
+    caption,
+  }: {
+    active: boolean;
+    onClick: () => void;
+    title: string;
+    children: React.ReactNode;
+    caption: string;
+  }) {
+    return (
+      <div className="flex w-11 flex-col items-center gap-0.5">
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={onClick}
+          title={title}
+          className={cn(circle, active ? selectedRing : idleRing)}
+        >
+          {children}
+          {active ? (
+            <span className="absolute bottom-0 right-0 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-accent text-accent-foreground ring-2 ring-background">
+              <Check className="h-2 w-2" strokeWidth={3} />
+            </span>
+          ) : null}
+        </button>
+        <span className="max-w-11 truncate text-center text-[9px] leading-tight text-muted-foreground">
+          {caption}
+        </span>
+      </div>
+    );
   }
-  if (choice === "__none__") return "No character";
-  return avatars.find((a) => a.id === choice)?.name ?? "Character";
+
+  return (
+    <div className="flex flex-wrap gap-x-2 gap-y-1.5">
+      <Chip
+        active={value === "__inherit__"}
+        onClick={() => onChange("__inherit__")}
+        title={`Project default${projectScenarioName ? ` (${projectScenarioName})` : ""}`}
+        caption="Default"
+      >
+        {projectScenario?.primaryImageUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={projectScenario.primaryImageUrl} alt="" className="h-full w-full object-cover" />
+        ) : (
+          <Layers className="h-4 w-4 text-muted-foreground" />
+        )}
+      </Chip>
+
+      <Chip
+        active={value === "__none__"}
+        onClick={() => onChange("__none__")}
+        title="No scenario on this block"
+        caption="None"
+      >
+        <Ban className="h-4 w-4 text-muted-foreground" />
+      </Chip>
+
+      {scenarios.map((s) => (
+        <Chip
+          key={s.id}
+          active={value === s.id}
+          onClick={() => onChange(s.id)}
+          title={s.name}
+          caption={s.name.split(/\s+/)[0]}
+        >
+          {s.primaryImageUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={s.primaryImageUrl} alt={s.name} className="h-full w-full object-cover" />
+          ) : (
+            <Mountain className="h-4 w-4 text-muted-foreground" />
+          )}
+        </Chip>
+      ))}
+    </div>
+  );
 }
 
-function characterChoiceThumb(
-  choice: string,
-  avatars: Avatar[],
-  projectAvatarId: string | null,
-): { imageUrl: string | null; name?: string; fallback: "avatar" | "none" | "inherit" } {
-  if (choice === "__inherit__") {
-    const projectAvatar = projectAvatarId
-      ? avatars.find((a) => a.id === projectAvatarId)
-      : undefined;
-    return {
-      imageUrl: projectAvatar?.primaryImageUrl ?? null,
-      name: projectAvatar?.name,
-      fallback: "inherit",
-    };
+function CharacterChoiceCircles({
+  avatars,
+  value,
+  projectAvatarId,
+  projectAvatarName,
+  disabled,
+  onChange,
+}: {
+  avatars: Avatar[];
+  value: string;
+  projectAvatarId: string | null;
+  projectAvatarName: string | null;
+  disabled?: boolean;
+  onChange: (next: string) => void;
+}) {
+  const projectAvatar = projectAvatarId
+    ? avatars.find((a) => a.id === projectAvatarId) ?? null
+    : null;
+
+  const circle =
+    "relative flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full border-2 bg-muted transition-colors disabled:opacity-50";
+  const selectedRing = "border-accent ring-2 ring-accent/25";
+  const idleRing = "border-border hover:border-accent/40";
+
+  function Chip({
+    active,
+    onClick,
+    title,
+    children,
+    caption,
+  }: {
+    active: boolean;
+    onClick: () => void;
+    title: string;
+    children: React.ReactNode;
+    caption: string;
+  }) {
+    return (
+      <div className="flex w-11 flex-col items-center gap-0.5">
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={onClick}
+          title={title}
+          className={cn(circle, active ? selectedRing : idleRing)}
+        >
+          {children}
+          {active ? (
+            <span className="absolute bottom-0 right-0 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-accent text-accent-foreground ring-2 ring-background">
+              <Check className="h-2 w-2" strokeWidth={3} />
+            </span>
+          ) : null}
+        </button>
+        <span className="max-w-11 truncate text-center text-[9px] leading-tight text-muted-foreground">
+          {caption}
+        </span>
+      </div>
+    );
   }
-  if (choice === "__none__") {
-    return { imageUrl: null, name: "No character", fallback: "none" };
-  }
-  const avatar = avatars.find((a) => a.id === choice);
-  return {
-    imageUrl: avatar?.primaryImageUrl ?? null,
-    name: avatar?.name,
-    fallback: "avatar",
-  };
+
+  return (
+    <div className="flex flex-wrap gap-x-2 gap-y-1.5">
+      <Chip
+        active={value === "__inherit__"}
+        onClick={() => onChange("__inherit__")}
+        title={`Project default${projectAvatarName ? ` (${projectAvatarName})` : ""}`}
+        caption="Default"
+      >
+        {projectAvatar?.primaryImageUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={projectAvatar.primaryImageUrl} alt="" className="h-full w-full object-cover" />
+        ) : (
+          <UserRound className="h-4 w-4 text-muted-foreground" />
+        )}
+      </Chip>
+
+      <Chip
+        active={value === "__none__"}
+        onClick={() => onChange("__none__")}
+        title="No character on this block"
+        caption="None"
+      >
+        <Ban className="h-4 w-4 text-muted-foreground" />
+      </Chip>
+
+      {avatars.map((a) => (
+        <Chip
+          key={a.id}
+          active={value === a.id}
+          onClick={() => onChange(a.id)}
+          title={a.name}
+          caption={a.name.split(/\s+/)[0]}
+        >
+          {a.primaryImageUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={a.primaryImageUrl} alt={a.name} className="h-full w-full object-cover" />
+          ) : (
+            <UserRound className="h-4 w-4 text-muted-foreground" />
+          )}
+        </Chip>
+      ))}
+    </div>
+  );
 }
 
 type BlockPanelSectionId =
@@ -286,24 +484,42 @@ function BlockPanelCollapsedRail({
 function BlockPanelFlyout({
   title,
   blockNumber,
+  width,
+  onResizeStart,
+  onResizeReset,
   onClose,
   onDelete,
   children,
 }: {
   title: string;
   blockNumber: number;
+  width: number;
+  onResizeStart: (e: React.MouseEvent) => void;
+  onResizeReset: () => void;
   onClose: () => void;
   onDelete?: () => void;
   children: React.ReactNode;
 }) {
   return (
     <div
+      style={{ width }}
       className={cn(
-        "flex h-full w-80 shrink-0 flex-col overflow-hidden border-l border-border/50 shadow-2xl",
+        "relative flex h-full shrink-0 flex-col overflow-hidden border-l border-border/50 shadow-2xl",
         "bg-panel/90 backdrop-blur-xl supports-[backdrop-filter]:bg-panel/75",
         "[html[data-theme=dark]_&]:bg-panel/80",
       )}
     >
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize panel"
+        title="Arraste para redimensionar · duplo clique para restaurar"
+        onMouseDown={onResizeStart}
+        onDoubleClick={onResizeReset}
+        className="group absolute inset-y-0 left-0 z-20 flex w-2 cursor-col-resize items-center justify-center hover:bg-accent/10"
+      >
+        <span className="h-full w-px bg-border/60 transition-colors group-hover:bg-accent" />
+      </div>
       <div className="flex items-center gap-2 border-b border-border/50 bg-background/40 px-2.5 py-1.5 backdrop-blur-sm">
         <h3 className="min-w-0 flex-1 truncate text-sm font-semibold">{title}</h3>
         <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">#{blockNumber}</span>
@@ -333,6 +549,28 @@ function BlockPanelFlyout({
   );
 }
 
+const CAMERA_ANGLE_ICONS: Record<string, LucideIcon> = {
+  auto: Sparkles,
+  eye_level: Eye,
+  low_angle: ArrowUp,
+  high_angle: ArrowDown,
+  aerial: Plane,
+  pov: Glasses,
+  ots: Users,
+  close_up: ZoomIn,
+  wide: Maximize,
+};
+
+const FLYOUT_MIN_WIDTH = 220;
+const FLYOUT_MAX_WIDTH = 720;
+const FLYOUT_DEFAULT_WIDTH = 320;
+const FLYOUT_WIDTH_KEY = "imagine.blockPanel.flyoutWidth";
+
+function clampFlyoutWidth(value: number): number {
+  if (!Number.isFinite(value)) return FLYOUT_DEFAULT_WIDTH;
+  return Math.min(FLYOUT_MAX_WIDTH, Math.max(FLYOUT_MIN_WIDTH, Math.round(value)));
+}
+
 export function BlockDetailPanel({
   block,
   blocks = [],
@@ -340,7 +578,13 @@ export function BlockDetailPanel({
   avatars,
   projectAvatarId,
   projectAvatarName,
+  scenarios = [],
+  projectScenarioId = null,
+  projectScenarioName = null,
   videoFormat = "horizontal",
+  projectImageModel = null,
+  projectVideoModel = null,
+  projectTtsModel = null,
   onPatched,
   onRemoved,
   onDeleteBlock,
@@ -363,6 +607,10 @@ export function BlockDetailPanel({
   const [avatarChoice, setAvatarChoice] = React.useState(
     block ? avatarSelectValue(block) : "__inherit__",
   );
+  const [scenarioChoice, setScenarioChoice] = React.useState(
+    block ? scenarioSelectValue(block) : "__inherit__",
+  );
+  const [savingScenario, setSavingScenario] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [savingVolume, setSavingVolume] = React.useState(false);
   const [savingSceneVolume, setSavingSceneVolume] = React.useState(false);
@@ -371,6 +619,12 @@ export function BlockDetailPanel({
     normalizeVideoShotCount(block?.videoShotCount),
   );
   const [savingVideoShots, setSavingVideoShots] = React.useState(false);
+  const [videoCameraAngle, setVideoCameraAngle] = React.useState(
+    normalizeCameraAngle(block?.videoCameraAngle),
+  );
+  const [savingCameraAngle, setSavingCameraAngle] = React.useState(false);
+  const [flyoutWidth, setFlyoutWidth] = React.useState(FLYOUT_DEFAULT_WIDTH);
+  const flyoutWidthRef = React.useRef(FLYOUT_DEFAULT_WIDTH);
   const [keyframeFitMode, setKeyframeFitMode] = React.useState<KeyframeFitMode>(
     normalizeKeyframeFitMode(block?.keyframeFitMode),
   );
@@ -390,6 +644,59 @@ export function BlockDetailPanel({
   const [activeRailSection, setActiveRailSection] =
     React.useState<BlockPanelSectionId | null>(null);
   const [focusSectionId, setFocusSectionId] = React.useState<BlockPanelSectionId | null>(null);
+
+  React.useEffect(() => {
+    try {
+      const stored = Number(localStorage.getItem(FLYOUT_WIDTH_KEY));
+      if (Number.isFinite(stored) && stored > 0) {
+        const clamped = clampFlyoutWidth(stored);
+        flyoutWidthRef.current = clamped;
+        setFlyoutWidth(clamped);
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }, []);
+
+  const handleFlyoutResizeStart = React.useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startWidth = flyoutWidthRef.current;
+      const onMove = (ev: MouseEvent) => {
+        // Handle sits on the LEFT edge of a right-docked panel: drag left = wider.
+        const next = clampFlyoutWidth(startWidth + (startX - ev.clientX));
+        flyoutWidthRef.current = next;
+        setFlyoutWidth(next);
+      };
+      const onUp = () => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+        try {
+          localStorage.setItem(FLYOUT_WIDTH_KEY, String(flyoutWidthRef.current));
+        } catch {
+          // ignore storage errors
+        }
+      };
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    },
+    [],
+  );
+
+  const handleFlyoutResizeReset = React.useCallback(() => {
+    flyoutWidthRef.current = FLYOUT_DEFAULT_WIDTH;
+    setFlyoutWidth(FLYOUT_DEFAULT_WIDTH);
+    try {
+      localStorage.setItem(FLYOUT_WIDTH_KEY, String(FLYOUT_DEFAULT_WIDTH));
+    } catch {
+      // ignore storage errors
+    }
+  }, []);
 
   React.useEffect(() => {
     if (!timelineExpanded) return;
@@ -467,6 +774,7 @@ export function BlockDetailPanel({
       setSceneAudioVolume(next.sceneAudioVolume);
       setAvatarChoice(next.avatarChoice);
       setVideoShotCount(normalizeVideoShotCount(block.videoShotCount));
+      setVideoCameraAngle(normalizeCameraAngle(block.videoCameraAngle));
       setKeyframeFitMode(normalizeKeyframeFitMode(block.keyframeFitMode));
     } else if (prev) {
       if (narrativeText === prev.narrativeText && next.narrativeText !== prev.narrativeText) {
@@ -497,6 +805,10 @@ export function BlockDetailPanel({
       if (!savingVideoShots && videoShotCount !== serverShots) {
         setVideoShotCount(serverShots);
       }
+      const serverAngle = normalizeCameraAngle(block.videoCameraAngle);
+      if (!savingCameraAngle && videoCameraAngle !== serverAngle) {
+        setVideoCameraAngle(serverAngle);
+      }
       const serverFit = normalizeKeyframeFitMode(block.keyframeFitMode);
       if (!savingKeyframeFit && keyframeFitMode !== serverFit) {
         setKeyframeFitMode(serverFit);
@@ -516,8 +828,15 @@ export function BlockDetailPanel({
     block?.avatarId,
     block?.characterName,
     block?.videoShotCount,
+    block?.videoCameraAngle,
     block?.keyframeFitMode,
   ]);
+
+  React.useEffect(() => {
+    if (!block) return;
+    if (!savingScenario) setScenarioChoice(scenarioSelectValue(block));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [block?.id, block?.scenarioId]);
 
   React.useEffect(() => {
     if (!block) return;
@@ -780,6 +1099,41 @@ export function BlockDetailPanel({
     }
   }
 
+  async function saveScenarioChoice(next: string) {
+    if (!block) return;
+    setScenarioChoice(next);
+    setSavingScenario(true);
+    const scenarioId = next === "__inherit__" ? null : next === "__none__" ? "__none__" : next;
+    const matched = scenarios.find((s) => s.id === scenarioId);
+    try {
+      const res = await fetch(`/api/blocks/${block.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scenarioId }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error ?? "Failed");
+      onPatched(block.id, { scenarioId }, { recordHistory: true });
+      toast({
+        variant: "success",
+        title:
+          scenarioId === "__none__"
+            ? "No scenario on this block"
+            : matched
+              ? `Scenario: ${matched.name}`
+              : "Using project default scenario",
+      });
+    } catch (err) {
+      setScenarioChoice(scenarioSelectValue(block));
+      toast({
+        variant: "destructive",
+        title: "Could not save scenario",
+        description: err instanceof Error ? err.message : "Unknown error",
+      });
+    } finally {
+      setSavingScenario(false);
+    }
+  }
+
   async function saveAvatarChoice(next: string) {
     if (!block) return;
     setAvatarChoice(next);
@@ -846,6 +1200,39 @@ export function BlockDetailPanel({
       });
     } finally {
       setSavingVideoShots(false);
+    }
+  }
+
+  async function saveVideoCameraAngle(next: string) {
+    if (!block) return;
+    const normalized = normalizeCameraAngle(next);
+    const previous = normalizeCameraAngle(block.videoCameraAngle);
+    setVideoCameraAngle(normalized);
+    setSavingCameraAngle(true);
+    try {
+      const res = await fetch(`/api/blocks/${block.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ videoCameraAngle: normalized }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error ?? "Failed");
+      onPatched(block.id, { videoCameraAngle: normalized }, { recordHistory: true });
+      toast({
+        variant: "success",
+        title:
+          normalized === "auto"
+            ? "Camera: automatic perspective"
+            : `Camera: ${cameraAngleLabel(normalized)} on regenerate`,
+      });
+    } catch (err) {
+      setVideoCameraAngle(previous);
+      toast({
+        variant: "destructive",
+        title: "Could not save camera angle",
+        description: err instanceof Error ? err.message : "Unknown error",
+      });
+    } finally {
+      setSavingCameraAngle(false);
     }
   }
 
@@ -1510,6 +1897,53 @@ export function BlockDetailPanel({
                 {videoShotCount > 1 ? " · Regenerate video to apply." : null}
               </p>
             </div>
+            <div className="col-span-2">
+              <Label
+                className="mb-0.5 flex items-center gap-1 text-[10px]"
+                title="Adds a camera perspective to the AI video prompt on regenerate"
+              >
+                <Camera className="h-2.5 w-2.5" />
+                Camera / perspective
+                {savingCameraAngle && <Loader2 className="ml-1 h-2.5 w-2.5 animate-spin" />}
+              </Label>
+              <div
+                role="radiogroup"
+                aria-label="Camera / perspective"
+                className="grid grid-cols-4 gap-1"
+              >
+                {CAMERA_ANGLE_OPTIONS.map((option) => {
+                  const Icon = CAMERA_ANGLE_ICONS[option.value] ?? Camera;
+                  const active = videoCameraAngle === option.value;
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      aria-label={option.label}
+                      title={`${option.label} — ${option.hint}`}
+                      disabled={savingCameraAngle}
+                      onClick={() => void saveVideoCameraAngle(option.value)}
+                      className={cn(
+                        "flex flex-col items-center gap-1 rounded-md border px-1 py-1.5 transition-colors",
+                        active
+                          ? "border-accent bg-accent/10 text-foreground ring-1 ring-accent/30"
+                          : "border-border bg-background text-muted-foreground hover:bg-muted/40",
+                      )}
+                    >
+                      <Icon className="h-4 w-4 shrink-0" />
+                      <span className="max-w-full truncate text-[9px] leading-tight">
+                        {option.label}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
+                {CAMERA_ANGLE_OPTIONS.find((o) => o.value === videoCameraAngle)?.hint}
+                {videoCameraAngle !== "auto" ? " · Regenerate video to apply." : null}
+              </p>
+            </div>
           </div>
           <div className="mt-1.5">
             <Label
@@ -1520,55 +1954,35 @@ export function BlockDetailPanel({
               Character
               {savingAvatar && <Loader2 className="ml-1 h-2.5 w-2.5 animate-spin" />}
             </Label>
-            <Select
+            <CharacterChoiceCircles
+              avatars={avatars}
               value={avatarChoice}
-              onValueChange={saveAvatarChoice}
+              projectAvatarId={projectAvatarId}
+              projectAvatarName={projectAvatarName ?? null}
               disabled={savingAvatar}
-            >
-              <SelectTrigger className="h-8 py-0 text-xs">
-                <div className="flex min-w-0 flex-1 items-center gap-2">
-                  <AvatarThumb
-                    size="sm"
-                    {...characterChoiceThumb(avatarChoice, avatars, projectAvatarId)}
-                  />
-                  <span className="truncate">
-                    {characterChoiceLabel(avatarChoice, avatars, projectAvatarName)}
-                  </span>
-                </div>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__inherit__" className="py-1.5 pr-2 text-xs">
-                  <span className="flex items-center gap-2">
-                    <AvatarThumb
-                      size="sm"
-                      {...characterChoiceThumb("__inherit__", avatars, projectAvatarId)}
-                    />
-                    <span>
-                      Project default{projectAvatarName ? ` (${projectAvatarName})` : ""}
-                    </span>
-                  </span>
-                </SelectItem>
-                <SelectItem value="__none__" className="py-1.5 pr-2 text-xs">
-                  <span className="flex items-center gap-2">
-                    <AvatarThumb size="sm" fallback="none" name="No character" />
-                    <span>No character</span>
-                  </span>
-                </SelectItem>
-                {avatars.map((a) => (
-                  <SelectItem key={a.id} value={a.id} className="py-1.5 pr-2 text-xs">
-                    <span className="flex items-center gap-2">
-                      <AvatarThumb
-                        size="sm"
-                        imageUrl={a.primaryImageUrl}
-                        name={a.name}
-                      />
-                      <span>{a.name}</span>
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              onChange={saveAvatarChoice}
+            />
           </div>
+          {scenarios.length > 0 ? (
+            <div className="mt-2 border-t border-border/60 pt-2">
+              <Label
+                className="mb-0.5 flex items-center gap-1 text-[10px]"
+                title="Environment reference used for keyframe and video generation"
+              >
+                <Mountain className="h-2.5 w-2.5" />
+                Scenario
+                {savingScenario && <Loader2 className="ml-1 h-2.5 w-2.5 animate-spin" />}
+              </Label>
+              <ScenarioChoiceCircles
+                scenarios={scenarios}
+                value={scenarioChoice}
+                projectScenarioId={projectScenarioId}
+                projectScenarioName={projectScenarioName}
+                disabled={savingScenario}
+                onChange={saveScenarioChoice}
+              />
+            </div>
+          ) : null}
           <div className="mt-2 space-y-2 border-t border-border/60 pt-2">
             <Label className="mb-0.5 flex items-center gap-1 text-[10px]">
               <Volume2 className="h-2.5 w-2.5" />
@@ -1838,6 +2252,7 @@ export function BlockDetailPanel({
               icon={<ImageIcon className="h-3 w-3" />}
               url={block.keyframeUrl ?? null}
               kind="image"
+              aiLabel={mediaAiBadgeLabel(block.keyframeAiModel, "image", projectImageModel)}
               regenDisabled={generating}
               previewClass={cn(
                 "mt-1 rounded bg-black object-cover",
@@ -1856,6 +2271,7 @@ export function BlockDetailPanel({
               icon={<Film className="h-3 w-3" />}
               url={block.videoUrl ?? null}
               kind="video"
+              aiLabel={mediaAiBadgeLabel(block.videoAiModel, "video", projectVideoModel)}
               regenDisabled={generating}
               previewClass={cn(
                 "mt-1 rounded bg-black object-contain",
@@ -2001,6 +2417,7 @@ export function BlockDetailPanel({
               icon={<AudioLines className="h-3 w-3" />}
               url={block.audioUrl ?? null}
               kind="audio"
+              aiLabel={mediaAiBadgeLabel(block.narrationAiModel, "tts", projectTtsModel)}
               regenDisabled={generating}
               onRegen={() => regenerate("audio")}
               onClear={() => clearMedia("audio")}
@@ -2010,6 +2427,11 @@ export function BlockDetailPanel({
               icon={<Waves className="h-3 w-3" />}
               url={block.sceneAudioUrl ?? null}
               kind="audio"
+              aiLabel={mediaAiBadgeLabel(
+                block.sceneAudioAiModel,
+                "scene",
+                projectVideoModel,
+              )}
               regenDisabled={generating}
               onRegen={() => regenerate("video")}
               regenLabel="Regenerate video"
@@ -2039,6 +2461,9 @@ export function BlockDetailPanel({
             key={`${block.id}-${activeRailSection}`}
             title={activeRailSectionMeta.title}
             blockNumber={block.position + 1}
+            width={flyoutWidth}
+            onResizeStart={handleFlyoutResizeStart}
+            onResizeReset={handleFlyoutResizeReset}
             onClose={() => setActiveRailSection(null)}
             onDelete={() => void remove()}
           >
@@ -2380,6 +2805,7 @@ function MediaRow({
   url,
   kind,
   previewClass,
+  aiLabel,
   onRegen,
   onUpload,
   onPickFromGallery,
@@ -2395,6 +2821,8 @@ function MediaRow({
   url: string | null;
   kind: "image" | "video" | "audio";
   previewClass?: string;
+  /** Small badge: AI model or source (Upload, Stock, …). */
+  aiLabel?: string | null;
   onRegen: () => void;
   onUpload?: (file: File) => void;
   onPickFromGallery?: () => void;
@@ -2431,6 +2859,14 @@ function MediaRow({
           >
             {url ? "✓" : "—"}
           </Badge>
+          {aiLabel ? (
+            <span
+              className="ml-0.5 max-w-[120px] truncate text-[9px] text-muted-foreground"
+              title={`Generated with ${aiLabel}`}
+            >
+              · {aiLabel}
+            </span>
+          ) : null}
         </div>
         <div className="flex shrink-0 items-center">
           {onPickFromImport ? (
@@ -2518,22 +2954,41 @@ function MediaRow({
         </div>
       </div>
       {url && kind === "image" && !previewBroken && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          key={url}
-          src={url}
-          alt=""
-          className={previewClass ?? "mt-1 aspect-video w-full rounded object-cover"}
-          onError={() => setPreviewBroken(true)}
-        />
+        <div className="relative mt-1 overflow-hidden rounded">
+          {aiLabel ? (
+            <span
+              className="absolute left-1 top-1 z-10 max-w-[calc(100%-0.5rem)] truncate rounded bg-black/70 px-1.5 py-0.5 text-[9px] font-medium leading-tight text-white shadow-sm backdrop-blur-sm"
+              title={`Generated with ${aiLabel}`}
+            >
+              {aiLabel}
+            </span>
+          ) : null}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            key={url}
+            src={url}
+            alt=""
+            className={previewClass ?? "aspect-video w-full rounded object-cover"}
+            onError={() => setPreviewBroken(true)}
+          />
+        </div>
       )}
       {url && kind === "video" && (
         <div
           className={cn(
+            "relative mt-1 overflow-hidden rounded bg-black",
             previewClass ??
-              "mt-1 aspect-video w-full overflow-hidden rounded bg-black",
+              "aspect-video w-full",
           )}
         >
+          {aiLabel ? (
+            <span
+              className="absolute left-1 top-1 z-10 max-w-[calc(100%-0.5rem)] truncate rounded bg-black/70 px-1.5 py-0.5 text-[9px] font-medium leading-tight text-white shadow-sm backdrop-blur-sm"
+              title={`Generated with ${aiLabel}`}
+            >
+              {aiLabel}
+            </span>
+          ) : null}
           <video src={url} controls className="h-full w-full object-contain" />
         </div>
       )}

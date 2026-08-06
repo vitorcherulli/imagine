@@ -912,6 +912,18 @@ export function PreviewPlayer({
     }
   }
 
+  // In fullscreen, keep the media inside an aspect-correct centered "stage"
+  // (letterboxed) instead of stretching to fill the whole screen — matters
+  // most for vertical 9:16 on a landscape monitor.
+  const stageClass = cn(
+    "absolute inset-0",
+    isFullscreen &&
+      cn(
+        "relative inset-auto mx-auto h-full w-auto max-w-full overflow-hidden",
+        formatSpec.previewAspectClass,
+      ),
+  );
+
   return (
     <div
       ref={wrapperRef}
@@ -934,6 +946,7 @@ export function PreviewPlayer({
           "fullscreen:flex fullscreen:aspect-auto fullscreen:h-screen fullscreen:w-screen fullscreen:max-w-none fullscreen:items-center fullscreen:justify-center fullscreen:rounded-none fullscreen:bg-black",
         )}
       >
+      <div className={stageClass}>
       {clientReady ? (
         <>
       {hasStill ? (
@@ -999,10 +1012,6 @@ export function PreviewPlayer({
         </div>
       )}
 
-      <audio ref={audioRef} className="hidden" preload="metadata" />
-      <audio ref={sceneRef} className="hidden" preload="metadata" />
-      <audio ref={musicRef} className="hidden" preload="metadata" />
-
       {captionLayout.enabled && captionText && (
         <div
           className={cn(
@@ -1022,6 +1031,11 @@ export function PreviewPlayer({
           </p>
         </div>
       )}
+      </div>
+
+      <audio ref={audioRef} className="hidden" preload="metadata" />
+      <audio ref={sceneRef} className="hidden" preload="metadata" />
+      <audio ref={musicRef} className="hidden" preload="metadata" />
 
       <Button
         type="button"

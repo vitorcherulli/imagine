@@ -14,8 +14,14 @@ export function loadPlatformPreviewDefaults(): PlatformPreviewDefaults {
   try {
     const modeRaw = window.localStorage.getItem(PLATFORM_PREVIEW_MODE_KEY);
     const warmupRaw = window.localStorage.getItem(PLATFORM_PREVIEW_WARMUP_KEY);
+    // `proxy` is deprecated and now behaves like `full` — migrate saved prefs.
+    const mode = isPreviewMode(modeRaw)
+      ? modeRaw === "proxy"
+        ? "full"
+        : modeRaw
+      : DEFAULT_PLATFORM_PREVIEW.mode;
     return {
-      mode: isPreviewMode(modeRaw) ? modeRaw : DEFAULT_PLATFORM_PREVIEW.mode,
+      mode,
       warmupEnabled:
         warmupRaw === null ? DEFAULT_PLATFORM_PREVIEW.warmupEnabled : warmupRaw === "1",
     };

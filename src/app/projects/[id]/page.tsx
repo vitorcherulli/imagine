@@ -70,7 +70,7 @@ export default async function ProjectPage({ params }: { params: { id: string } }
 
   const blocks = await loadProjectBlocks(hydratedProject.id);
 
-  const [projects, avatars, projectAvatar, projectDna, exportRows] = await Promise.all([
+  const [projects, avatars, projectAvatar, projectDna, exportRows, scenarios] = await Promise.all([
     db
       .select()
       .from(schema.projects)
@@ -99,6 +99,11 @@ export default async function ProjectPage({ params }: { params: { id: string } }
       .from(schema.exports)
       .where(eq(schema.exports.projectId, project.id))
       .orderBy(asc(schema.exports.createdAt)),
+    db
+      .select()
+      .from(schema.scenarios)
+      .where(eq(schema.scenarios.userId, userId))
+      .orderBy(desc(schema.scenarios.updatedAt)),
   ]);
 
   const [yt] = await db
@@ -123,6 +128,7 @@ export default async function ProjectPage({ params }: { params: { id: string } }
         initialYoutubeMetadata={yt ?? null}
         avatars={avatars}
         projectDna={projectDna}
+        scenarios={scenarios}
         initialAvatar={projectAvatar}
       />
     </div>

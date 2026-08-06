@@ -1,4 +1,5 @@
 export const PROJECT_DURATIONS = [
+  { label: "15 seconds", value: 15 },
   { label: "30 seconds", value: 30 },
   { label: "1 min", value: 60 },
   { label: "90 sec", value: 90 },

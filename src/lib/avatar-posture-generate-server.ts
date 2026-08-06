@@ -7,6 +7,7 @@ import {
 } from "@/lib/avatar-posture-presets";
 import { generateImage } from "@/lib/openrouter/images";
 import { OPENROUTER_MODELS } from "@/lib/openrouter/client";
+import { imageModelSupportsPersonReferencePhotos } from "@/lib/project-api-models";
 import { saveAvatarBuffer } from "@/lib/storage";
 import {
   MAX_AVATAR_IMAGES,
@@ -39,6 +40,13 @@ export async function generateAvatarPostureImage(input: {
     throw new Error("Upload at least one reference image before generating postures.");
   }
 
+  const model = input.imageModel?.trim() || OPENROUTER_MODELS.image;
+  if (!imageModelSupportsPersonReferencePhotos(model)) {
+    throw new Error(
+      "GPT Image can't generate new poses from reference photos. Choose Seedream, Gemini, or Flux in image settings.",
+    );
+  }
+
   const prompt = buildAvatarPosturePrompt({
     avatarName: input.avatar.name,
     avatarDescription: input.avatar.description,
@@ -47,10 +55,9 @@ export async function generateAvatarPostureImage(input: {
 
   const img = await generateImage({
     prompt,
-    model: input.imageModel?.trim() || OPENROUTER_MODELS.image,
+    model,
     aspectRatio: "1:1",
-    imageSize: "1K",
-    referenceImages,
+    personReferenceImages: referenceImages,
     referenceImagesFirst: true,
   });
 

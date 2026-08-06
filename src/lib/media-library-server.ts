@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { createId } from "@paralleldrive/cuid2";
 import { db, schema } from "@/lib/db";
 import type { MediaLibraryAsset, MediaLibraryFolder } from "@/lib/db/schema";
@@ -65,6 +65,28 @@ export async function listMediaLibraryAssets(
     .from(schema.mediaLibraryAssets)
     .where(where)
     .orderBy(desc(schema.mediaLibraryAssets.createdAt));
+}
+
+/** Search assets by name across ALL folders (case-insensitive), scoped to the user. */
+export async function searchMediaLibraryAssets(
+  userId: string,
+  query: string,
+  limit = 200,
+): Promise<MediaLibraryAsset[]> {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  const pattern = `%${q.replace(/[%_]/g, (m) => `\\${m}`)}%`;
+  return db
+    .select()
+    .from(schema.mediaLibraryAssets)
+    .where(
+      and(
+        eq(schema.mediaLibraryAssets.userId, userId),
+        sql`lower(${schema.mediaLibraryAssets.name}) like ${pattern} escape '\\'`,
+      ),
+    )
+    .orderBy(desc(schema.mediaLibraryAssets.createdAt))
+    .limit(limit);
 }
 
 export async function getOwnedMediaFolder(folderId: string, userId: string) {

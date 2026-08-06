@@ -4,6 +4,7 @@ import {
   buildMediaFolderTree,
   listMediaLibraryAssets,
   listMediaLibraryFolders,
+  searchMediaLibraryAssets,
 } from "@/lib/media-library-server";
 
 export const dynamic = "force-dynamic";
@@ -14,10 +15,13 @@ export async function GET(req: NextRequest) {
 
   const folderParam = req.nextUrl.searchParams.get("folderId");
   const folderId = folderParam === "root" || !folderParam ? null : folderParam;
+  const search = req.nextUrl.searchParams.get("search")?.trim() ?? "";
 
   const [folders, assets] = await Promise.all([
     listMediaLibraryFolders(userId),
-    listMediaLibraryAssets(userId, folderId),
+    search
+      ? searchMediaLibraryAssets(userId, search)
+      : listMediaLibraryAssets(userId, folderId),
   ]);
 
   return NextResponse.json({
@@ -25,5 +29,6 @@ export async function GET(req: NextRequest) {
     tree: buildMediaFolderTree(folders),
     assets,
     folderId,
+    search: search || null,
   });
 }

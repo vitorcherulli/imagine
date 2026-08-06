@@ -27,7 +27,7 @@ import {
   normalizeVideoFormat,
   type VideoFormat,
 } from "@/lib/video-format";
-import type { Project, ProjectDna } from "@/lib/db/schema";
+import type { Project, ProjectDna, Scenario } from "@/lib/db/schema";
 import { projectDnaSummary } from "@/lib/project-dna";
 import {
   normalizeProjectScriptLanguage,
@@ -48,10 +48,11 @@ interface SectionProps {
   title: string;
   summary?: string;
   resetEpoch: number;
+  className?: string;
   children: React.ReactNode;
 }
 
-function Section({ icon, title, summary, resetEpoch, children }: SectionProps) {
+function Section({ icon, title, summary, resetEpoch, className, children }: SectionProps) {
   const [collapsed, setCollapsed] = React.useState(true);
 
   React.useEffect(() => {
@@ -63,7 +64,7 @@ function Section({ icon, title, summary, resetEpoch, children }: SectionProps) {
   }
 
   return (
-    <div className="overflow-hidden rounded-md border border-border bg-background">
+    <div className={cn("overflow-hidden rounded-md border border-border bg-background", className)}>
       <button
         type="button"
         onClick={toggle}
@@ -98,15 +99,21 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   project: Project;
   projectDnaItems: ProjectDna[];
+  scenarioItems?: Scenario[];
   onVideoFormatChange: (format: VideoFormat) => void | Promise<void>;
   onCaptionModeChange: (mode: CaptionMode) => void | Promise<void>;
   onCutSettingsChange: (patch: { cutPace?: CutPaceId }) => void | Promise<void>;
   onScriptLanguageChange: (language: ProjectScriptLanguage) => void | Promise<void>;
   onPreviewModeChange: (mode: ProjectPreviewMode) => void | Promise<void>;
   onCleanupProjectPreviews: () => Promise<number>;
-  onBriefChange: (patch: { projectDnaId?: string | null; storyDescription?: string }) => void;
+  onBriefChange: (patch: {
+    projectDnaId?: string | null;
+    scenarioId?: string | null;
+    storyDescription?: string;
+  }) => void;
   onBriefSave: (patch: {
     projectDnaId?: string | null;
+    scenarioId?: string | null;
     storyDescription?: string;
   }) => Promise<void>;
 }
@@ -116,6 +123,7 @@ export function ProjectSettingsDialog({
   onOpenChange,
   project,
   projectDnaItems,
+  scenarioItems = [],
   onVideoFormatChange,
   onCaptionModeChange,
   onCutSettingsChange,
@@ -157,7 +165,7 @@ export function ProjectSettingsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-h-[88vh] max-w-3xl overflow-hidden">
         <DialogHeader>
           <DialogTitle>Project settings</DialogTitle>
           <DialogDescription>
@@ -165,7 +173,7 @@ export function ProjectSettingsDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-2 pt-1">
+        <div className="grid max-h-[calc(88vh-6rem)] grid-cols-1 items-start gap-2 overflow-y-auto pt-1 pr-1 scrollbar-thin sm:grid-cols-2">
           <Section
             resetEpoch={resetEpoch}
             icon={<MonitorSmartphone className="h-3.5 w-3.5" />}
@@ -267,10 +275,13 @@ export function ProjectSettingsDialog({
             icon={<FileText className="h-3.5 w-3.5" />}
             title="DNA & synopsis"
             summary={briefSummary}
+            className="sm:col-span-2"
           >
             <ProjectBriefFields
               projectDnaId={project.projectDnaId ?? null}
               projectDnaItems={projectDnaItems}
+              scenarioId={project.scenarioId ?? null}
+              scenarioItems={scenarioItems}
               storyDescription={project.storyDescription}
               onChange={onBriefChange}
               onSave={onBriefSave}

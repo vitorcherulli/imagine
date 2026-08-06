@@ -2,6 +2,91 @@
 export const VIDEO_SHOT_COUNT_MIN = 1;
 export const VIDEO_SHOT_COUNT_MAX = 4;
 
+/** Camera angle / perspective applied to the whole block's video clip (prompt only). */
+export interface CameraAngleOption {
+  value: string;
+  label: string;
+  hint: string;
+  /** English instruction appended to the video prompt. Empty for "auto". */
+  prompt: string;
+}
+
+export const CAMERA_ANGLE_OPTIONS: CameraAngleOption[] = [
+  { value: "auto", label: "Auto", hint: "Let the model decide", prompt: "" },
+  {
+    value: "eye_level",
+    label: "Eye level",
+    hint: "Neutral, straight-on view",
+    prompt: "Eye-level camera perspective, straight-on and neutral.",
+  },
+  {
+    value: "low_angle",
+    label: "Low angle",
+    hint: "Looking up — heroic, imposing",
+    prompt: "Low-angle shot looking up at the subject, making it feel powerful and imposing.",
+  },
+  {
+    value: "high_angle",
+    label: "High angle",
+    hint: "Looking down — vulnerable, small",
+    prompt: "High-angle shot looking down at the subject, making the scene feel smaller or vulnerable.",
+  },
+  {
+    value: "aerial",
+    label: "Aerial / drone",
+    hint: "Bird's-eye, top-down flyover",
+    prompt: "Aerial drone perspective, high bird's-eye view flying over the scene.",
+  },
+  {
+    value: "pov",
+    label: "POV",
+    hint: "First-person point of view",
+    prompt: "First-person point-of-view (POV) shot, as if seen through the subject's eyes.",
+  },
+  {
+    value: "ots",
+    label: "Over-shoulder",
+    hint: "Behind the subject's shoulder",
+    prompt: "Over-the-shoulder shot framed from just behind the subject.",
+  },
+  {
+    value: "close_up",
+    label: "Close-up",
+    hint: "Tight framing on detail/face",
+    prompt: "Tight close-up framing focused on the subject's face or key detail.",
+  },
+  {
+    value: "wide",
+    label: "Wide",
+    hint: "Wide establishing shot",
+    prompt: "Wide establishing shot showing the full environment around the subject.",
+  },
+];
+
+export const DEFAULT_CAMERA_ANGLE = "auto";
+
+export function normalizeCameraAngle(value: unknown): string {
+  const v = String(value ?? "").trim();
+  return CAMERA_ANGLE_OPTIONS.some((o) => o.value === v) ? v : DEFAULT_CAMERA_ANGLE;
+}
+
+export function cameraAngleLabel(value: unknown): string {
+  const normalized = normalizeCameraAngle(value);
+  return CAMERA_ANGLE_OPTIONS.find((o) => o.value === normalized)?.label ?? "Auto";
+}
+
+/** English camera-perspective instruction appended to the video prompt (empty for auto). */
+export function buildCameraAnglePromptInstruction(value: unknown): string {
+  const normalized = normalizeCameraAngle(value);
+  return CAMERA_ANGLE_OPTIONS.find((o) => o.value === normalized)?.prompt ?? "";
+}
+
+export function appendCameraAngleInstruction(basePrompt: string, cameraAngle: unknown): string {
+  const suffix = buildCameraAnglePromptInstruction(cameraAngle);
+  if (!suffix.trim()) return basePrompt;
+  return `${basePrompt.trim()}\n\n${suffix}`;
+}
+
 export interface VideoShotCountOption {
   value: number;
   label: string;

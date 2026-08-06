@@ -66,6 +66,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       await setBlockStatus(params.id, {
         audioUrl: withCacheBuster(url),
         durationSeconds,
+        narrationAiModel: models.ttsModel,
         status: videoReady ? "ready" : "audio_ready",
       });
     } catch (err) {

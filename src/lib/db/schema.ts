@@ -52,6 +52,8 @@ export const projects = sqliteTable("projects", {
   avatarId: text("avatar_id"),
   /** JSON array of avatar ids participating in this project */
   avatarIds: text("avatar_ids").default("[]"),
+  /** Selected environment/scenario from the user's library */
+  scenarioId: text("scenario_id"),
   styleBible: text("style_bible"),
   anchorImageUrl: text("anchor_image_url"),
   anchorImagePrompt: text("anchor_image_prompt"),
@@ -86,6 +88,21 @@ export const projects = sqliteTable("projects", {
   scriptDraftStatus: text("script_draft_status").notNull().default("none"),
   /** Current script version number (script_versions.version). */
   scriptDraftVersion: integer("script_draft_version"),
+  /** Dubbing: target language for AI dub (e.g. en, pt, es, fr, …). */
+  dubTargetLanguage: text("dub_target_language"),
+  /** Dubbing: gain (0–1) applied to the original audio behind the new voice. */
+  dubBackgroundGain: real("dub_background_gain").notNull().default(0),
+  /** Dubbing: 1 = clone source speaker with ElevenLabs IVC instead of picker voice. */
+  dubUseVoiceClone: integer("dub_use_voice_clone", { mode: "boolean" })
+    .notNull()
+    .default(false),
+  /** Dubbing: cached ElevenLabs voice_id created from the source (IVC). */
+  dubClonedVoiceId: text("dub_cloned_voice_id"),
+  /** Dubbing pipeline progress (live while processing). */
+  dubPipelineStage: text("dub_pipeline_stage"),
+  dubPipelineMessage: text("dub_pipeline_message"),
+  dubPipelineCurrent: integer("dub_pipeline_current"),
+  dubPipelineTotal: integer("dub_pipeline_total"),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .default(sql`(unixepoch())`),
@@ -183,6 +200,17 @@ export const projectDna = sqliteTable("project_dna", {
   colorPalette: text("color_palette"),
   /** Extra aesthetic notes — lighting, textures, mood */
   visualMood: text("visual_mood"),
+  /** Per-DNA new-video defaults — prefilled when this DNA is picked on a new project. */
+  llmModel: text("llm_model"),
+  imageModel: text("image_model"),
+  videoModel: text("video_model"),
+  videoClipAudio: text("video_clip_audio"),
+  ttsModel: text("tts_model"),
+  ttsVoice: text("tts_voice"),
+  videoFormat: text("video_format"),
+  cutPace: text("cut_pace"),
+  scriptLanguage: text("script_language"),
+  targetDurationSeconds: integer("target_duration_seconds"),
   /** Episode insights accumulated over time (append-only bullets). */
   /** Folder id for client brand photos (child of DNA root in media library) */
   galleryFolderId: text("gallery_folder_id"),
@@ -196,6 +224,21 @@ export const projectDna = sqliteTable("project_dna", {
 });
 
 export const avatars = sqliteTable("avatars", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  name: text("name").notNull(),
+  description: text("description"),
+  imageUrls: text("image_urls").notNull().default("[]"),
+  primaryImageUrl: text("primary_image_url"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+export const scenarios = sqliteTable("scenarios", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull(),
   name: text("name").notNull(),
@@ -238,14 +281,22 @@ export const storyBlocks = sqliteTable("story_blocks", {
   /** Absolute start (seconds) on the scene-audio track. */
   sceneTimelineStart: real("scene_timeline_start"),
   videoShotCount: integer("video_shot_count").notNull().default(1),
+  /** Camera angle / perspective applied to the video clip (prompt only). */
+  videoCameraAngle: text("video_camera_angle").notNull().default("auto"),
   /** contain = letterbox full image · cover = fill project frame (crop edges) */
   keyframeFitMode: text("keyframe_fit_mode").notNull().default("cover"),
   /** Pexels (or other stock) clip id when video was imported from stock search. */
   stockVideoId: text("stock_video_id"),
   /** Last OpenRouter charge for block video generation (USD). */
   openRouterCostUsd: real("open_router_cost_usd"),
+  /** OpenRouter model slug (or MEDIA_AI_SOURCE) used for the current keyframe. */
+  keyframeAiModel: text("keyframe_ai_model"),
+  videoAiModel: text("video_ai_model"),
+  narrationAiModel: text("narration_ai_model"),
+  sceneAudioAiModel: text("scene_audio_ai_model"),
   avatarId: text("avatar_id"),
   characterName: text("character_name"),
+  scenarioId: text("scenario_id"),
   status: text("status").notNull().default("draft"),
   errorMessage: text("error_message"),
   createdAt: integer("created_at", { mode: "timestamp" })
@@ -340,6 +391,130 @@ export const exports = sqliteTable("exports", {
     .default(sql`(unixepoch())`),
 });
 
+export const dubbingSources = sqliteTable("dubbing_sources", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id")
+    .notNull()
+    .unique()
+    .references(() => projects.id, { onDelete: "cascade" }),
+  /** "video" (MP4/MOV) or "audio" (MP3/M4A/WAV). */
+  sourceType: text("source_type").notNull(),
+  /** URL of the uploaded original file (video or audio). */
+  sourceUrl: text("source_url").notNull(),
+  /** URL of the extracted mono audio (MP3) used for STT/clone. */
+  extractedAudioUrl: text("extracted_audio_url"),
+  originalFilename: text("original_filename"),
+  mimeType: text("mime_type"),
+  sizeBytes: integer("size_bytes"),
+  durationSeconds: real("duration_seconds"),
+  /** BCP-47-ish language code detected by STT (en, pt, es, …). */
+  detectedLanguage: text("detected_language"),
+  /** Which STT engine produced the transcript. */
+  transcriptEngine: text("transcript_engine"),
+  transcribedAt: integer("transcribed_at", { mode: "timestamp" }),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+export const dubbingSegments = sqliteTable("dubbing_segments", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => projects.id, { onDelete: "cascade" }),
+  position: integer("position").notNull(),
+  startSeconds: real("start_seconds").notNull(),
+  endSeconds: real("end_seconds").notNull(),
+  /** Original transcribed text (source language). */
+  sourceText: text("source_text").notNull().default(""),
+  sourceLanguage: text("source_language"),
+  /** Translated text (target language). */
+  translatedText: text("translated_text").notNull().default(""),
+  targetLanguage: text("target_language"),
+  /** URL of the synthesized dub for this segment (MP3). */
+  ttsAudioUrl: text("tts_audio_url"),
+  ttsDurationSeconds: real("tts_duration_seconds"),
+  ttsModel: text("tts_model"),
+  ttsVoice: text("tts_voice"),
+  /** atempo ratio applied to fit original span (1 = no stretch). */
+  stretchRatio: real("stretch_ratio"),
+  /** pending | transcribed | translated | synthesized | error */
+  status: text("status").notNull().default("pending"),
+  errorMessage: text("error_message"),
+  /** Optional speaker id if diarization becomes available (Phase 2). */
+  speakerId: text("speaker_id"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+export const dubbingRenders = sqliteTable("dubbing_renders", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => projects.id, { onDelete: "cascade" }),
+  /** "video" = MP4 remuxed · "audio" = MP3 only */
+  kind: text("kind").notNull(),
+  url: text("url").notNull(),
+  targetLanguage: text("target_language"),
+  /** FK to dubbing_tracks when exported from a specific timeline row. */
+  trackId: text("track_id"),
+  backgroundGain: real("background_gain").notNull().default(0),
+  durationSeconds: real("duration_seconds"),
+  sizeBytes: integer("size_bytes"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+/** One timeline row per target language (EN, ES, …). */
+export const dubbingTracks = sqliteTable("dubbing_tracks", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => projects.id, { onDelete: "cascade" }),
+  languageId: text("language_id").notNull(),
+  sortOrder: integer("sort_order").notNull().default(0),
+  ttsVoice: text("tts_voice"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+/** Per-segment translation + TTS for a given language track. */
+export const dubbingSegmentLocales = sqliteTable("dubbing_segment_locales", {
+  id: text("id").primaryKey(),
+  segmentId: text("segment_id")
+    .notNull()
+    .references(() => dubbingSegments.id, { onDelete: "cascade" }),
+  trackId: text("track_id")
+    .notNull()
+    .references(() => dubbingTracks.id, { onDelete: "cascade" }),
+  translatedText: text("translated_text").notNull().default(""),
+  ttsAudioUrl: text("tts_audio_url"),
+  ttsDurationSeconds: real("tts_duration_seconds"),
+  ttsModel: text("tts_model"),
+  ttsVoice: text("tts_voice"),
+  stretchRatio: real("stretch_ratio"),
+  status: text("status").notNull().default("pending"),
+  errorMessage: text("error_message"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
 export type ProjectFolder = typeof projectFolders.$inferSelect;
 export type NewProjectFolder = typeof projectFolders.$inferInsert;
 export type MediaLibraryFolder = typeof mediaLibraryFolders.$inferSelect;
@@ -362,3 +537,15 @@ export type ProjectDna = typeof projectDna.$inferSelect;
 export type NewProjectDna = typeof projectDna.$inferInsert;
 export type Avatar = typeof avatars.$inferSelect;
 export type NewAvatar = typeof avatars.$inferInsert;
+export type Scenario = typeof scenarios.$inferSelect;
+export type NewScenario = typeof scenarios.$inferInsert;
+export type DubbingSource = typeof dubbingSources.$inferSelect;
+export type NewDubbingSource = typeof dubbingSources.$inferInsert;
+export type DubbingSegment = typeof dubbingSegments.$inferSelect;
+export type NewDubbingSegment = typeof dubbingSegments.$inferInsert;
+export type DubbingRender = typeof dubbingRenders.$inferSelect;
+export type NewDubbingRender = typeof dubbingRenders.$inferInsert;
+export type DubbingTrack = typeof dubbingTracks.$inferSelect;
+export type NewDubbingTrack = typeof dubbingTracks.$inferInsert;
+export type DubbingSegmentLocale = typeof dubbingSegmentLocales.$inferSelect;
+export type NewDubbingSegmentLocale = typeof dubbingSegmentLocales.$inferInsert;

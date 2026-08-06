@@ -24,8 +24,13 @@ export const LLM_MODEL_OPTIONS: ApiModelOption[] = [
 export const IMAGE_MODEL_OPTIONS: ApiModelOption[] = [
   { value: "openai/gpt-5.4-image-2", label: "GPT-5.4 Image (ChatGPT)" },
   { value: "google/gemini-2.5-flash-image", label: "Gemini 2.5 Flash Image" },
+  { value: "google/gemini-3.1-flash-image-preview", label: "Gemini 3.1 Flash Image" },
+  { value: "x-ai/grok-imagine-image-quality", label: "Grok Imagine Image (quality)" },
   { value: "bytedance-seed/seedream-4.5", label: "Seedream 4.5" },
+  { value: "black-forest-labs/flux.2-klein-4b", label: "Flux 2 Klein 4B" },
+  { value: "black-forest-labs/flux.2-flex", label: "Flux 2 Flex" },
   { value: "black-forest-labs/flux.2-pro", label: "Flux 2 Pro" },
+  { value: "black-forest-labs/flux.2-max", label: "Flux 2 Max" },
 ];
 
 export const VIDEO_MODEL_OPTIONS: ApiModelOption[] = [
@@ -64,6 +69,14 @@ export function videoLabelForModel(model: string): string {
   return VIDEO_MODEL_OPTIONS.find((o) => o.value === model)?.label ?? model;
 }
 
+export function imageLabelForModel(model: string): string {
+  return IMAGE_MODEL_OPTIONS.find((o) => o.value === model)?.label ?? model;
+}
+
+export function ttsLabelForModel(model: string): string {
+  return TTS_MODEL_OPTIONS.find((o) => o.value === model)?.label ?? model;
+}
+
 export function videoOpenRouterBillingForModel(model: string): string | null {
   return VIDEO_MODEL_OPTIONS.find((o) => o.value === model)?.openRouterBilling ?? null;
 }
@@ -87,6 +100,11 @@ export function isOpenAiGptImageModel(model: string): boolean {
   return model.startsWith("openai/") && model.includes("image");
 }
 
+/** GPT Image refuses likeness generation from uploaded photos of real people. */
+export function imageModelSupportsPersonReferencePhotos(model: string): boolean {
+  return !isOpenAiGptImageModel(model);
+}
+
 export function isGeminiImageModel(model: string): boolean {
   return model.startsWith("google/gemini") && model.includes("flash-image");
 }
@@ -94,6 +112,16 @@ export function isGeminiImageModel(model: string): boolean {
 /** Chat-completions image models that also emit text (OpenRouter: use image+text modalities). */
 export function imageModelUsesTextModality(model: string): boolean {
   return isOpenAiGptImageModel(model) || isGeminiImageModel(model);
+}
+
+/** Models that require OpenRouter's dedicated POST /api/v1/images endpoint (not chat/completions). */
+export function imageModelUsesDedicatedImagesApi(model: string): boolean {
+  if (isOpenAiGptImageModel(model)) return true;
+  if (isGeminiImageModel(model)) return true;
+  if (model.startsWith("x-ai/grok-imagine-image")) return true;
+  if (model.startsWith("bytedance-seed/seedream")) return true;
+  if (model.startsWith("black-forest-labs/flux.2-")) return true;
+  return false;
 }
 
 const IMAGE_MODEL_VALUES = new Set(IMAGE_MODEL_OPTIONS.map((o) => o.value));

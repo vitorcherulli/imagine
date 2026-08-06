@@ -5,10 +5,10 @@ import {
   loadPlatformPreviewDefaults,
   PLATFORM_PREVIEW_PREFS_EVENT,
 } from "@/lib/app-preview-preferences";
-import type { PlatformPreviewDefaults } from "@/lib/preview-settings";
+import { DEFAULT_PLATFORM_PREVIEW, type PlatformPreviewDefaults } from "@/lib/preview-settings";
 
 export function usePlatformPreviewDefaults(): PlatformPreviewDefaults {
-  const [defaults, setDefaults] = React.useState(loadPlatformPreviewDefaults);
+  const [defaults, setDefaults] = React.useState(DEFAULT_PLATFORM_PREVIEW);
 
   React.useEffect(() => {
     function refresh() {

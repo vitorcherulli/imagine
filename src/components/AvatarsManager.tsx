@@ -21,7 +21,7 @@ export function AvatarsManager({ initial }: { initial: Avatar[] }) {
   const [avatars, setAvatars] = useState<AvatarRow[]>(initial);
   const [creating, setCreating] = useState(false);
   return (
-    <div className="mx-auto max-w-4xl px-5 py-5">
+    <div className="mx-auto max-w-6xl px-5 py-5">
       <header className="mb-4 flex items-center justify-between">
         <div>
           <h1 className="text-base font-semibold">Avatars</h1>
@@ -63,7 +63,7 @@ export function AvatarsManager({ initial }: { initial: Avatar[] }) {
         />
       )}
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
         {avatars.map((av) => (
           <AvatarCard
             key={av.id}
@@ -237,44 +237,43 @@ function AvatarCard({
 }) {
   const [editOpen, setEditOpen] = useState(false);
   const images = parseImages(avatar);
+  const cover = avatar.primaryImageUrl ?? images[0] ?? null;
 
   return (
     <>
       <button
         type="button"
         onClick={() => setEditOpen(true)}
-        className="rounded-lg border border-border bg-panel text-left transition-colors hover:border-accent/40 hover:bg-panel/80"
+        title={`${avatar.name} — click to edit postures`}
+        className="group flex flex-col overflow-hidden rounded-lg border border-border bg-panel text-left transition-colors hover:border-accent/40 hover:bg-panel/80"
       >
-        <div className="grid grid-cols-3 gap-1 p-2">
-          {images.slice(0, 6).map((url) => {
-            const isPrimary = url === avatar.primaryImageUrl;
-            return (
-              <div
-                key={url}
-                className={
-                  "relative aspect-square overflow-hidden rounded-md border " +
-                  (isPrimary ? "border-accent ring-1 ring-accent/40" : "border-transparent")
-                }
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={url} alt={avatar.name} className="h-full w-full object-cover" />
-                {isPrimary && (
-                  <span className="absolute left-1 top-1 rounded-full bg-accent p-0.5 text-accent-foreground">
-                    <Star className="h-2.5 w-2.5" />
-                  </span>
-                )}
-              </div>
-            );
-          })}
+        <div className="relative aspect-square overflow-hidden bg-muted">
+          {cover ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={cover}
+              alt={avatar.name}
+              className="h-full w-full object-cover transition-transform group-hover:scale-105"
+            />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center text-muted-foreground">
+              <UserSquare className="h-6 w-6" />
+            </div>
+          )}
+          <span className="absolute left-1.5 top-1.5 rounded-full bg-accent p-0.5 text-accent-foreground shadow-sm">
+            <Star className="h-2.5 w-2.5" />
+          </span>
+          {images.length > 1 && (
+            <span className="absolute bottom-1.5 right-1.5 rounded-full bg-background/85 px-1.5 py-0.5 text-[9px] font-medium text-foreground backdrop-blur-sm">
+              {images.length} poses
+            </span>
+          )}
         </div>
-        <div className="flex items-center justify-between border-t border-border px-3 py-2">
-          <div className="min-w-0">
-            <h3 className="truncate text-sm font-medium">{avatar.name}</h3>
-            {avatar.description && (
-              <p className="line-clamp-1 text-2xs text-muted-foreground">{avatar.description}</p>
-            )}
-            <p className="mt-0.5 text-[10px] text-muted-foreground">Click to edit postures</p>
-          </div>
+        <div className="min-w-0 border-t border-border px-2 py-1.5">
+          <h3 className="truncate text-xs font-medium">{avatar.name}</h3>
+          {avatar.description && (
+            <p className="line-clamp-1 text-[10px] text-muted-foreground">{avatar.description}</p>
+          )}
         </div>
       </button>
 

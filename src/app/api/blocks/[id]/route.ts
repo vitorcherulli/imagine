@@ -27,10 +27,24 @@ const patchSchema = z.object({
   sceneAudioVolume: z.number().int().min(0).max(100).optional(),
   avatarId: z.union([z.string().max(64), z.null()]).optional(),
   characterName: z.union([z.string().max(120), z.null()]).optional(),
+  scenarioId: z.union([z.string().max(64), z.null()]).optional(),
   videoTimelineStart: z.number().min(0).max(86400).nullable().optional(),
   narrationTimelineStart: z.number().min(0).max(86400).nullable().optional(),
   sceneTimelineStart: z.number().min(0).max(86400).nullable().optional(),
   videoShotCount: z.number().int().min(1).max(4).optional(),
+  videoCameraAngle: z
+    .enum([
+      "auto",
+      "eye_level",
+      "low_angle",
+      "high_angle",
+      "aerial",
+      "pov",
+      "ots",
+      "close_up",
+      "wide",
+    ])
+    .optional(),
   keyframeFitMode: z.enum(["contain", "cover"]).optional(),
 });
 

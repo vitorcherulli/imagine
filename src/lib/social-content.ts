@@ -1,6 +1,6 @@
 import type { Project } from "./db/schema";
 
-export type ProjectContentType = "video" | "social";
+export type ProjectContentType = "video" | "social" | "dubbing";
 
 export type PostFormat = "carousel" | "single";
 
@@ -51,13 +51,21 @@ export const POST_FORMATS: Array<{ id: PostFormat; label: string; hint: string }
 ];
 
 export function normalizeContentType(value: unknown): ProjectContentType {
-  return value === "social" ? "social" : "video";
+  if (value === "social") return "social";
+  if (value === "dubbing") return "dubbing";
+  return "video";
 }
 
 export function isSocialProject(
   project: Pick<Project, "contentType"> | { contentType?: string | null },
 ): boolean {
   return normalizeContentType(project.contentType) === "social";
+}
+
+export function isDubbingProject(
+  project: Pick<Project, "contentType"> | { contentType?: string | null },
+): boolean {
+  return normalizeContentType(project.contentType) === "dubbing";
 }
 
 export function normalizePostFormat(value: unknown): PostFormat {
@@ -79,5 +87,7 @@ export function clampSlideCount(count: number, postFormat: PostFormat): number {
 }
 
 export function projectEditorHref(project: Pick<Project, "id" | "contentType">): string {
-  return isSocialProject(project) ? `/publications/${project.id}` : `/projects/${project.id}`;
+  if (isDubbingProject(project)) return `/dubs/${project.id}`;
+  if (isSocialProject(project)) return `/publications/${project.id}`;
+  return `/projects/${project.id}`;
 }

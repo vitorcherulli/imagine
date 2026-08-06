@@ -3,6 +3,7 @@ import { tryUser } from "@/lib/auth";
 import { getBlockForUser, setBlockStatus } from "@/lib/block-helpers";
 import { isVideoMp4Buffer } from "@/lib/ffmpeg";
 import { importVideoBufferToBlock } from "@/lib/stock-video-import-server";
+import { MEDIA_AI_SOURCE } from "@/lib/media-ai-label";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 180;
@@ -68,6 +69,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       videoJobId: null,
       videoPollingUrl: null,
       stockVideoId: null,
+      videoAiModel: MEDIA_AI_SOURCE.upload,
+      keyframeAiModel: imported.keyframeUrl ? MEDIA_AI_SOURCE.extracted : null,
+      sceneAudioAiModel: imported.sceneAudioUrl ? MEDIA_AI_SOURCE.extracted : null,
     });
 
     return NextResponse.json({

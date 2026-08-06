@@ -78,9 +78,20 @@ export async function resolveBlockAvatar(
   return fetchAvatarById(resolveBlockAvatarId(block, project));
 }
 
-export function avatarHintForPrompt(avatar: Avatar | null): string {
+export function avatarHintForPrompt(
+  avatar: Avatar | null,
+  opts?: { referencePhotosAttached?: boolean },
+): string {
   if (!avatar) return "";
   const desc = avatar.description?.trim();
+  const attachRefs = opts?.referencePhotosAttached !== false;
+  if (!attachRefs) {
+    return (
+      ` Main character "${avatar.name}" appears in this scene.` +
+      (desc ? ` Appearance: ${desc}.` : "") +
+      " Fictional character — consistent face and wardrobe across shots, not a portrait of a specific real individual."
+    );
+  }
   return ` Main character "${avatar.name}" must match the reference photos exactly (face, hair, build, outfit).${desc ? ` Character notes: ${desc}.` : ""}`;
 }
 

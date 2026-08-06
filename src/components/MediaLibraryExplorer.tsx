@@ -2,7 +2,9 @@
 
 import * as React from "react";
 import {
+  ArrowDownAZ,
   ChevronRight,
+  Clock,
   Download,
   Film,
   Folder,
@@ -10,9 +12,12 @@ import {
   FolderPlus,
   Home,
   ImageIcon,
+  Layers,
   Loader2,
+  Search,
   Trash2,
   Upload,
+  X,
 } from "lucide-react";
 import type { MediaLibraryAsset, MediaLibraryFolder } from "@/lib/db/schema";
 import { galleryAssetThumbnailFallback, galleryAssetThumbnailUrl, isVideoAsset } from "@/lib/gallery-asset-preview";
@@ -25,10 +30,57 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 type FolderNode = MediaLibraryFolder & { children: FolderNode[] };
+
+type SortMode = "recent" | "oldest" | "name";
+
+interface DnaMeta {
+  id: string;
+  name: string;
+}
+
+function buildFolderPathLabel(
+  foldersById: Map<string, MediaLibraryFolder>,
+  folderId: string | null,
+): string {
+  if (!folderId) return "Gallery root";
+  const trail: string[] = [];
+  let current = foldersById.get(folderId);
+  let guard = 0;
+  while (current && guard < 20) {
+    trail.unshift(current.name);
+    current = current.parentId ? foldersById.get(current.parentId) : undefined;
+    guard += 1;
+  }
+  return trail.length ? trail.join(" / ") : "Gallery root";
+}
+
+function sortFolders(list: MediaLibraryFolder[], mode: SortMode): MediaLibraryFolder[] {
+  const copy = [...list];
+  if (mode === "name") {
+    copy.sort((a, b) => a.name.localeCompare(b.name));
+  }
+  return copy;
+}
+
+function sortAssets(list: MediaLibraryAsset[], mode: SortMode): MediaLibraryAsset[] {
+  const copy = [...list];
+  const time = (a: MediaLibraryAsset) => new Date(a.createdAt as unknown as string).getTime();
+  if (mode === "name") copy.sort((a, b) => a.name.localeCompare(b.name));
+  else if (mode === "oldest") copy.sort((a, b) => time(a) - time(b));
+  else copy.sort((a, b) => time(b) - time(a));
+  return copy;
+}
 
 const ASSET_DRAG_MIME = "text/x-imagine-media-asset-id";
 
@@ -213,7 +265,7 @@ function GalleryAssetThumb({ asset }: { asset: MediaLibraryAsset }) {
   );
 }
 
-export function MediaLibraryExplorer() {
+export function MediaLibraryExplorer({ dnas = [] }: { dnas?: DnaMeta[] }) {
   const { toast } = useToast();
   const [folderId, setFolderId] = React.useState<string | null>(null);
   const [tree, setTree] = React.useState<FolderNode[]>([]);
@@ -225,7 +277,13 @@ export function MediaLibraryExplorer() {
   const [newFolderName, setNewFolderName] = React.useState("");
   const [draggingAssetId, setDraggingAssetId] = React.useState<string | null>(null);
   const [dragOverFolderId, setDragOverFolderId] = React.useState<string | null>(null);
+  const [searchInput, setSearchInput] = React.useState("");
+  const [search, setSearch] = React.useState("");
+  const [sortMode, setSortMode] = React.useState<SortMode>("recent");
+  const [groupByDna, setGroupByDna] = React.useState(dnas.length > 0);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  const searching = search.trim().length > 0;
 
   const rootDrop = folderDropHandlers(
     null,
@@ -234,26 +292,39 @@ export function MediaLibraryExplorer() {
     (assetId, targetFolderId) => void moveAssetToFolder(assetId, targetFolderId),
   );
 
-  const load = React.useCallback(async (targetFolderId: string | null) => {
-    setLoading(true);
-    try {
-      const query = targetFolderId ? `?folderId=${encodeURIComponent(targetFolderId)}` : "";
-      const res = await fetch(`/api/media-library${query}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed to load gallery");
-      setTree(data.tree ?? []);
-      setFolders(data.folders ?? []);
-      setAssets(data.assets ?? []);
-    } catch (err) {
-      toast({
-        variant: "destructive",
-        title: "Gallery error",
-        description: err instanceof Error ? err.message : "Unknown",
-      });
-    } finally {
-      setLoading(false);
-    }
-  }, [toast]);
+  const load = React.useCallback(
+    async (targetFolderId: string | null, query: string) => {
+      setLoading(true);
+      try {
+        const params = new URLSearchParams();
+        const trimmed = query.trim();
+        if (trimmed) params.set("search", trimmed);
+        else if (targetFolderId) params.set("folderId", targetFolderId);
+        const qs = params.toString();
+        const res = await fetch(`/api/media-library${qs ? `?${qs}` : ""}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? "Failed to load gallery");
+        setTree(data.tree ?? []);
+        setFolders(data.folders ?? []);
+        setAssets(data.assets ?? []);
+      } catch (err) {
+        toast({
+          variant: "destructive",
+          title: "Gallery error",
+          description: err instanceof Error ? err.message : "Unknown",
+        });
+      } finally {
+        setLoading(false);
+      }
+    },
+    [toast],
+  );
+
+  // Debounce the search box.
+  React.useEffect(() => {
+    const t = setTimeout(() => setSearch(searchInput), 250);
+    return () => clearTimeout(t);
+  }, [searchInput]);
 
   const prunedRef = React.useRef(false);
   React.useEffect(() => {
@@ -265,27 +336,54 @@ export function MediaLibraryExplorer() {
         return res.json() as Promise<{ prunedCount?: number }>;
       })
       .then((data) => {
-        if (data?.prunedCount) void load(folderId);
+        if (data?.prunedCount) void load(folderId, search);
       })
       .catch(() => {});
-  }, [folderId, load]);
+  }, [folderId, search, load]);
 
   React.useEffect(() => {
-    void load(folderId);
-  }, [folderId, load]);
+    void load(folderId, search);
+  }, [folderId, search, load]);
 
   const breadcrumbs = React.useMemo(
     () => findFolderPath(tree, folderId),
     [tree, folderId],
   );
 
-  const childFolders = React.useMemo(
-    () =>
-      folders.filter((f) =>
-        folderId === null ? f.parentId == null : f.parentId === folderId,
-      ),
-    [folders, folderId],
+  const foldersById = React.useMemo(() => {
+    const map = new Map<string, MediaLibraryFolder>();
+    for (const f of folders) map.set(f.id, f);
+    return map;
+  }, [folders]);
+
+  const childFolders = React.useMemo(() => {
+    if (searching) {
+      const q = search.trim().toLowerCase();
+      return folders.filter((f) => f.name.toLowerCase().includes(q));
+    }
+    return folders.filter((f) =>
+      folderId === null ? f.parentId == null : f.parentId === folderId,
+    );
+  }, [folders, folderId, searching, search]);
+
+  const sortedChildFolders = React.useMemo(
+    () => sortFolders(childFolders, sortMode),
+    [childFolders, sortMode],
   );
+  const sortedAssets = React.useMemo(() => sortAssets(assets, sortMode), [assets, sortMode]);
+
+  // Partition root nodes for "group by DNA" mode.
+  const groupedRoots = React.useMemo(() => {
+    const dna: FolderNode[] = [];
+    const project: FolderNode[] = [];
+    const general: FolderNode[] = [];
+    for (const node of tree) {
+      if (node.projectDnaId) dna.push(node);
+      else if (node.projectId) project.push(node);
+      else general.push(node);
+    }
+    return { dna, project, general };
+  }, [tree]);
 
   async function createFolder() {
     const name = newFolderName.trim();
@@ -300,7 +398,7 @@ export function MediaLibraryExplorer() {
       if (!res.ok) throw new Error(data.error ?? "Failed");
       setNewFolderOpen(false);
       setNewFolderName("");
-      await load(folderId);
+      await load(folderId, search);
       toast({ variant: "success", title: `Folder "${name}" created` });
     } catch (err) {
       toast({
@@ -323,7 +421,7 @@ export function MediaLibraryExplorer() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? "Upload failed");
       }
-      await load(folderId);
+      await load(folderId, search);
       toast({ variant: "success", title: "Image(s) uploaded to gallery" });
     } catch (err) {
       toast({
@@ -370,7 +468,7 @@ export function MediaLibraryExplorer() {
         targetFolderId === null
           ? "Gallery root"
           : folders.find((f) => f.id === targetFolderId)?.name ?? "folder";
-      await load(folderId);
+      await load(folderId, search);
       toast({ variant: "success", title: `Moved to ${folderName}` });
     } catch (err) {
       toast({
@@ -398,60 +496,119 @@ export function MediaLibraryExplorer() {
 
   return (
     <div className="flex h-full min-h-[480px] flex-col rounded-lg border border-border bg-panel">
-      <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
-        <div className="flex min-w-0 flex-1 items-center gap-1 text-xs text-muted-foreground">
-          <button
-            type="button"
-            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-muted hover:text-foreground"
-            onClick={() => setFolderId(null)}
-          >
-            <Home className="h-3.5 w-3.5" />
-            Gallery
-          </button>
-          {breadcrumbs.map((crumb) => (
-            <React.Fragment key={crumb.id}>
-              <ChevronRight className="h-3 w-3 shrink-0" />
+      <div className="border-b border-border">
+        <div className="flex items-center justify-between gap-2 px-3 py-2">
+          <div className="flex min-w-0 flex-1 items-center gap-1 text-xs text-muted-foreground">
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-muted hover:text-foreground"
+              onClick={() => setFolderId(null)}
+            >
+              <Home className="h-3.5 w-3.5" />
+              Gallery
+            </button>
+            {breadcrumbs.map((crumb) => (
+              <React.Fragment key={crumb.id}>
+                <ChevronRight className="h-3 w-3 shrink-0" />
+                <button
+                  type="button"
+                  className="truncate rounded px-1.5 py-0.5 hover:bg-muted hover:text-foreground"
+                  onClick={() => setFolderId(crumb.id)}
+                >
+                  {crumb.name}
+                </button>
+              </React.Fragment>
+            ))}
+          </div>
+          <div className="flex shrink-0 gap-1">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              multiple
+              className="hidden"
+              onChange={(e) => void uploadFiles(e.target.files)}
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 gap-1 text-xs"
+              disabled={uploading}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              {uploading ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Upload className="h-3.5 w-3.5" />
+              )}
+              Upload
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 gap-1 text-xs"
+              onClick={() => setNewFolderOpen(true)}
+            >
+              <FolderPlus className="h-3.5 w-3.5" />
+              New folder
+            </Button>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 px-3 pb-2">
+          <div className="relative min-w-[180px] flex-1">
+            <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder="Buscar imagens em toda a galeria…"
+              className="h-8 pl-7 pr-7 text-xs"
+            />
+            {searchInput ? (
               <button
                 type="button"
-                className="truncate rounded px-1.5 py-0.5 hover:bg-muted hover:text-foreground"
-                onClick={() => setFolderId(crumb.id)}
+                onClick={() => setSearchInput("")}
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                title="Limpar busca"
               >
-                {crumb.name}
+                <X className="h-3.5 w-3.5" />
               </button>
-            </React.Fragment>
-          ))}
-        </div>
-        <div className="flex shrink-0 gap-1">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-            multiple
-            className="hidden"
-            onChange={(e) => void uploadFiles(e.target.files)}
-          />
+            ) : null}
+          </div>
+
+          <Select value={sortMode} onValueChange={(v) => setSortMode(v as SortMode)}>
+            <SelectTrigger className="h-8 w-[150px] text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="recent">
+                <span className="flex items-center gap-1.5">
+                  <Clock className="h-3.5 w-3.5" /> Mais recentes
+                </span>
+              </SelectItem>
+              <SelectItem value="oldest">
+                <span className="flex items-center gap-1.5">
+                  <Clock className="h-3.5 w-3.5" /> Mais antigas
+                </span>
+              </SelectItem>
+              <SelectItem value="name">
+                <span className="flex items-center gap-1.5">
+                  <ArrowDownAZ className="h-3.5 w-3.5" /> Nome (A–Z)
+                </span>
+              </SelectItem>
+            </SelectContent>
+          </Select>
+
           <Button
-            variant="outline"
+            type="button"
+            variant={groupByDna ? "primary" : "outline"}
             size="sm"
-            className="h-7 gap-1 text-xs"
-            disabled={uploading}
-            onClick={() => fileInputRef.current?.click()}
+            className="h-8 gap-1 text-xs"
+            onClick={() => setGroupByDna((v) => !v)}
+            title="Agrupar pastas por DNA / projeto"
           >
-            {uploading ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Upload className="h-3.5 w-3.5" />
-            )}
-            Upload
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 gap-1 text-xs"
-            onClick={() => setNewFolderOpen(true)}
-          >
-            <FolderPlus className="h-3.5 w-3.5" />
-            New folder
+            <Layers className="h-3.5 w-3.5" />
+            Agrupar por DNA
           </Button>
         </div>
       </div>
@@ -473,21 +630,56 @@ export function MediaLibraryExplorer() {
             <ImageIcon className="h-3.5 w-3.5" />
             All at root
           </button>
-          {tree.map((node) => (
-            <FolderTreeItem
-              key={node.id}
-              node={node}
-              depth={0}
-              currentFolderId={folderId}
-              onSelect={setFolderId}
-              draggingAssetId={draggingAssetId}
-              dragOverFolderId={dragOverFolderId}
-              setDragOverFolderId={setDragOverFolderId}
-              onDropAsset={(assetId, targetFolderId) =>
-                void moveAssetToFolder(assetId, targetFolderId)
-              }
-            />
-          ))}
+          {groupByDna ? (
+            <>
+              {(
+                [
+                  ["DNA / marcas", groupedRoots.dna],
+                  ["Projetos", groupedRoots.project],
+                  ["Geral", groupedRoots.general],
+                ] as Array<[string, FolderNode[]]>
+              )
+                .filter(([, nodes]) => nodes.length > 0)
+                .map(([label, nodes]) => (
+                  <div key={label} className="mb-2">
+                    <p className="px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      {label}
+                    </p>
+                    {nodes.map((node) => (
+                      <FolderTreeItem
+                        key={node.id}
+                        node={node}
+                        depth={0}
+                        currentFolderId={folderId}
+                        onSelect={setFolderId}
+                        draggingAssetId={draggingAssetId}
+                        dragOverFolderId={dragOverFolderId}
+                        setDragOverFolderId={setDragOverFolderId}
+                        onDropAsset={(assetId, targetFolderId) =>
+                          void moveAssetToFolder(assetId, targetFolderId)
+                        }
+                      />
+                    ))}
+                  </div>
+                ))}
+            </>
+          ) : (
+            tree.map((node) => (
+              <FolderTreeItem
+                key={node.id}
+                node={node}
+                depth={0}
+                currentFolderId={folderId}
+                onSelect={setFolderId}
+                draggingAssetId={draggingAssetId}
+                dragOverFolderId={dragOverFolderId}
+                setDragOverFolderId={setDragOverFolderId}
+                onDropAsset={(assetId, targetFolderId) =>
+                  void moveAssetToFolder(assetId, targetFolderId)
+                }
+              />
+            ))
+          )}
         </aside>
 
         <div className="min-w-0 flex-1 overflow-auto p-3 scrollbar-thin">
@@ -496,17 +688,32 @@ export function MediaLibraryExplorer() {
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               Loading…
             </div>
-          ) : childFolders.length === 0 && assets.length === 0 ? (
+          ) : sortedChildFolders.length === 0 && sortedAssets.length === 0 ? (
             <div className="flex h-40 flex-col items-center justify-center gap-2 text-center text-sm text-muted-foreground">
               <ImageIcon className="h-8 w-8 opacity-40" />
-              <p>No images in this folder yet.</p>
-              <p className="text-xs">
-                Generated keyframes and imported references appear here automatically.
-              </p>
+              {searching ? (
+                <>
+                  <p>Nada encontrado para “{search}”.</p>
+                  <p className="text-xs">Tente outro termo ou limpe a busca.</p>
+                </>
+              ) : (
+                <>
+                  <p>No images in this folder yet.</p>
+                  <p className="text-xs">
+                    Generated keyframes and imported references appear here automatically.
+                  </p>
+                </>
+              )}
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-              {childFolders.map((sub) => {
+            <>
+              {searching ? (
+                <p className="mb-2 text-xs text-muted-foreground">
+                  {sortedChildFolders.length + sortedAssets.length} resultado(s) para “{search}”
+                </p>
+              ) : null}
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+              {sortedChildFolders.map((sub) => {
                 const subDrop = folderDropHandlers(
                   sub.id,
                   draggingAssetId,
@@ -518,7 +725,11 @@ export function MediaLibraryExplorer() {
                   <button
                     key={sub.id}
                     type="button"
-                    onClick={() => setFolderId(sub.id)}
+                    onClick={() => {
+                      setSearchInput("");
+                      setSearch("");
+                      setFolderId(sub.id);
+                    }}
                     className={cn(
                       "flex flex-col items-center gap-2 rounded-md border border-border bg-background p-4 text-left transition-colors hover:bg-muted",
                       dragOver && "ring-2 ring-accent",
@@ -527,10 +738,15 @@ export function MediaLibraryExplorer() {
                   >
                     <Folder className="h-10 w-10 text-amber-500" />
                     <span className="w-full truncate text-center text-xs font-medium">{sub.name}</span>
+                    {searching ? (
+                      <span className="w-full truncate text-center text-[9px] text-muted-foreground">
+                        {buildFolderPathLabel(foldersById, sub.parentId)}
+                      </span>
+                    ) : null}
                   </button>
                 );
               })}
-              {assets.map((asset) => (
+              {sortedAssets.map((asset) => (
                 <div
                   key={asset.id}
                   draggable
@@ -551,7 +767,9 @@ export function MediaLibraryExplorer() {
                   <GalleryAssetThumb asset={asset} />
                   <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-2 pt-6">
                     <p className="truncate text-[10px] font-medium text-white">{asset.name}</p>
-                    <p className="truncate text-[9px] text-white/70">{asset.source}</p>
+                    <p className="truncate text-[9px] text-white/70">
+                      {searching ? buildFolderPathLabel(foldersById, asset.folderId) : asset.source}
+                    </p>
                   </div>
                   <div className="absolute right-1 top-1 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
                     <button
@@ -579,7 +797,8 @@ export function MediaLibraryExplorer() {
                   </div>
                 </div>
               ))}
-            </div>
+              </div>
+            </>
           )}
         </div>
       </div>

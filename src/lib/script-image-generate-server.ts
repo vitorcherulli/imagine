@@ -6,6 +6,7 @@ import {
 } from "@/lib/avatar-block";
 import { ENGLISH_VISUAL_PROMPT_LINE } from "@/lib/generation-language";
 import { generateImage } from "@/lib/openrouter/images";
+import { imageModelSupportsPersonReferencePhotos } from "@/lib/project-api-models";
 import { getAspectRatio } from "@/lib/video-format";
 import {
   formatStyleBibleForPrompt,
@@ -90,17 +91,19 @@ export async function runScriptParagraphImageGenerate(input: {
   existingKeywords?: ScriptKeywordImageMatch[];
 }): Promise<ScriptKeywordImageMatch> {
   const bible = parseStyleBible(input.project.styleBible);
-  const avatarHint = avatarHintForPrompt(input.primaryAvatar);
   const avatarRefs = (await avatarReferenceImages(input.primaryAvatar)) ?? [];
   const editorialRefs = await loadEditorialReferenceDataUrls(input.project);
-  const referenceImages = [...editorialRefs, ...avatarRefs];
+  const attachAvatarRefs =
+    avatarRefs.length > 0 && imageModelSupportsPersonReferencePhotos(input.imageModel);
 
   const prompt = buildScriptParagraphImagePrompt({
     project: input.project,
     paragraphText: input.paragraphText,
     userPrompt: input.userPrompt,
     bible,
-    avatarHint,
+    avatarHint: avatarHintForPrompt(input.primaryAvatar, {
+      referencePhotosAttached: attachAvatarRefs,
+    }),
     hasEditorialReference: editorialRefs.length > 0,
   });
 
@@ -108,9 +111,9 @@ export async function runScriptParagraphImageGenerate(input: {
     prompt,
     model: input.imageModel,
     aspectRatio: getAspectRatio(input.project.videoFormat),
-    imageSize: "1K",
-    referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
-    referenceImagesFirst: referenceImages.length > 0,
+    referenceImages: editorialRefs.length > 0 ? editorialRefs : undefined,
+    personReferenceImages: avatarRefs.length > 0 ? avatarRefs : undefined,
+    referenceImagesFirst: editorialRefs.length > 0 || avatarRefs.length > 0,
   });
 
   const slug = slugify(input.userPrompt ?? `paragraph-${input.speechIndex + 1}`);

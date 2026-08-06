@@ -59,6 +59,12 @@ export function formatOpenRouterError(status: number, text: string): string {
   if (status === 402) {
     return "OpenRouter credits exhausted (402). Add credits at openrouter.ai/settings/credits.";
   }
+  if (detail?.toLowerCase().includes("3686400") || detail?.toLowerCase().includes("image size must be at least")) {
+    return (
+      "Image resolution is too small for this model (Seedream requires 4K — about 2560×1440 for 16:9). " +
+      "Regenerate the keyframe; the app now picks the correct size per model automatically."
+    );
+  }
   if (detail) return detail;
   return `OpenRouter error ${status}: ${text.slice(0, 280)}`;
 }

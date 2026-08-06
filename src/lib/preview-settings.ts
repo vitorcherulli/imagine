@@ -18,9 +18,20 @@ export interface ResolvedPreviewSettings {
   generateProxy: boolean;
 }
 
+/**
+ * Default is `full`: the in-player video always plays the original `video.mp4`.
+ *
+ * NOTE: The `proxy` preview mode (low-res `video_preview.mp4` + client cache +
+ * background warmup) is DEPRECATED. Since the player was refactored to always
+ * play the full video, the proxy no longer feeds playback — it only added
+ * background encoding, storage churn, and stale-cache bugs. The flags below
+ * (`useProxy`, `generateProxy`, `warmupEnabled`) are now forced off in
+ * {@link resolvePreviewSettings}, so `proxy` behaves like `full`. The enum and
+ * code paths are kept for backward compatibility with existing projects.
+ */
 export const DEFAULT_PLATFORM_PREVIEW: PlatformPreviewDefaults = {
-  mode: "proxy",
-  warmupEnabled: true,
+  mode: "full",
+  warmupEnabled: false,
 };
 
 export const PREVIEW_MODE_OPTIONS: Array<{
@@ -28,11 +39,6 @@ export const PREVIEW_MODE_OPTIONS: Array<{
   label: string;
   description: string;
 }> = [
-  {
-    id: "proxy",
-    label: "Light proxy",
-    description: "360p preview clips — smooth editing, fast export stays full quality.",
-  },
   {
     id: "keyframe",
     label: "Keyframes only",
@@ -46,7 +52,7 @@ export const PREVIEW_MODE_OPTIONS: Array<{
   {
     id: "off",
     label: "Disabled",
-    description: "Minimal preview — no proxy generation, no video playback.",
+    description: "Minimal preview — shows stills only, no video playback.",
   },
 ];
 
@@ -81,6 +87,8 @@ export function normalizeProjectPreviewMode(
 
 export function previewModeLabel(mode: PreviewMode | ProjectPreviewMode): string {
   if (mode === "auto") return "Platform default";
+  // Deprecated proxy mode now behaves like full quality.
+  if (mode === "proxy") return "Full quality";
   return PREVIEW_MODE_OPTIONS.find((o) => o.id === mode)?.label ?? mode;
 }
 
@@ -90,17 +98,16 @@ export function resolvePreviewSettings(
 ): ResolvedPreviewSettings {
   const normalized = normalizeProjectPreviewMode(projectMode);
   const mode = normalized === "auto" ? platform.mode : normalized;
-  const useProxy = mode === "proxy";
+  // Proxy preview is deprecated: `proxy` now plays the full video like `full`.
   const playVideo = mode === "proxy" || mode === "full";
-  const generateProxy = useProxy;
-  const warmupEnabled = useProxy && platform.warmupEnabled;
 
   return {
     mode,
-    warmupEnabled,
-    useProxy,
+    // Proxy/cache/warmup subsystem is deprecated and force-disabled.
+    warmupEnabled: false,
+    useProxy: false,
     playVideo,
-    generateProxy,
+    generateProxy: false,
   };
 }
 
@@ -109,10 +116,13 @@ export function serverDefaultPreviewMode(): PreviewMode {
   return DEFAULT_PLATFORM_PREVIEW.mode;
 }
 
+/**
+ * DEPRECATED: preview proxies are no longer generated. The player always plays
+ * the full `video.mp4`, so the low-res proxy added cost and stale-cache bugs
+ * without improving playback. Always returns false; kept for call-site stability.
+ */
 export function shouldGeneratePreviewProxy(
-  projectMode: string | null | undefined,
+  _projectMode: string | null | undefined,
 ): boolean {
-  const normalized = normalizeProjectPreviewMode(projectMode);
-  if (normalized === "auto") return serverDefaultPreviewMode() === "proxy";
-  return normalized === "proxy";
+  return false;
 }

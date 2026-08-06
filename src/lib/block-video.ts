@@ -20,9 +20,17 @@ import { canStretchVideoWithSlowMotion } from "@/lib/video-duration-mismatch";
 import { resolveProjectApiModels, resolveVideoGenerateAudio } from "@/lib/project-api-models";
 import { getAspectRatio } from "@/lib/video-format";
 import { openRouterHeaders } from "@/lib/openrouter/client";
-import { submitVideo, waitForVideo } from "@/lib/openrouter/videos";
+import { submitVideo, waitForVideo, isVideoKeyframeRejectedError } from "@/lib/openrouter/videos";
 import { buildSceneVisualPrompt, parseStyleBible } from "@/lib/style-bible";
-import { appendVideoShotInstructions, normalizeVideoShotCount } from "@/lib/video-shot-prompt";
+import {
+  resolveBlockScenario,
+  scenarioHintForPrompt,
+} from "@/lib/scenario-block";
+import {
+  appendCameraAngleInstruction,
+  appendVideoShotInstructions,
+  normalizeVideoShotCount,
+} from "@/lib/video-shot-prompt";
 import {
   assertReadableMediaFile,
   deleteMediaByPublicUrl,
@@ -63,13 +71,17 @@ async function resolveFirstFrameUrl(
   project: Project,
   block: StoryBlock,
 ): Promise<{ firstFrameUrl?: string; avatarHint: string }> {
+  const aspectRatio = getAspectRatio(project.videoFormat);
   if (block.keyframeUrl) {
-    return { firstFrameUrl: await readImageAsVideoFrameUrl(block.keyframeUrl), avatarHint: "" };
+    return {
+      firstFrameUrl: await readImageAsVideoFrameUrl(block.keyframeUrl, aspectRatio),
+      avatarHint: "",
+    };
   }
   const avatar = await resolveBlockAvatar(block, project);
   if (!avatar?.primaryImageUrl) return { avatarHint: avatarHintForPrompt(avatar) };
   return {
-    firstFrameUrl: await readImageAsVideoFrameUrl(avatar.primaryImageUrl),
+    firstFrameUrl: await readImageAsVideoFrameUrl(avatar.primaryImageUrl, aspectRatio),
     avatarHint: avatarHintForPrompt(avatar),
   };
 }
@@ -82,6 +94,8 @@ export async function generateBlockVideo(opts: {
   durationSeconds: number;
   sceneAudioUrl: string | null;
   openRouterCostUsd: number | null;
+  videoAiModel: string;
+  sceneAudioAiModel: string | null;
 }> {
   const { project, block } = opts;
   const models = resolveProjectApiModels(project);
@@ -90,6 +104,8 @@ export async function generateBlockVideo(opts: {
 
   const styleHint = project.visualStyle ? `${project.visualStyle}, ` : "";
   const { firstFrameUrl, avatarHint } = await resolveFirstFrameUrl(project, block);
+  const scenario = await resolveBlockScenario(block, project);
+  const scenarioHint = scenarioHintForPrompt(scenario);
   const bible = parseStyleBible(project.styleBible);
   const basePrompt =
     bible || block.locationTag
@@ -98,27 +114,44 @@ export async function generateBlockVideo(opts: {
           block,
           bible,
           avatarHint,
+          scenarioHint,
           hasEditorialReference: false,
         })
-      : `${styleHint}${block.visualPrompt}${avatarHint}`;
+      : `${styleHint}${block.visualPrompt}${avatarHint}${scenarioHint}`;
 
-  const prompt = appendVideoShotInstructions(
-    basePrompt,
-    normalizeVideoShotCount(block.videoShotCount),
-    clipDuration,
+  const prompt = appendCameraAngleInstruction(
+    appendVideoShotInstructions(
+      basePrompt,
+      normalizeVideoShotCount(block.videoShotCount),
+      clipDuration,
+    ),
+    block.videoCameraAngle,
   );
 
-  const submit = await submitVideo({
+  const videoInput = {
     prompt,
     model: models.videoModel,
     duration: clipDuration,
     aspect_ratio: getAspectRatio(project.videoFormat),
-    resolution: "720p",
+    resolution: "720p" as const,
     generateAudio: resolveVideoGenerateAudio(models.videoClipAudio),
-    frame_images: firstFrameUrl
-      ? [{ url: firstFrameUrl, frame: "first_frame" }]
-      : undefined,
-  });
+  };
+
+  let submit;
+  try {
+    submit = await submitVideo({
+      ...videoInput,
+      frame_images: firstFrameUrl
+        ? [{ url: firstFrameUrl, frame: "first_frame" as const }]
+        : undefined,
+    });
+  } catch (err) {
+    if (!firstFrameUrl || !isVideoKeyframeRejectedError(err)) throw err;
+    console.warn(
+      `[video] keyframe rejected by provider moderation, retrying text-to-video for block ${block.id}`,
+    );
+    submit = await submitVideo(videoInput);
+  }
 
   const result = await waitForVideo(submit.id, { pollingUrl: submit.polling_url });
   const fileUrl = result.unsigned_urls?.[0] ?? result.signed_urls?.[0];
@@ -195,6 +228,8 @@ export async function generateBlockVideo(opts: {
         typeof result.usage?.cost === "number" && Number.isFinite(result.usage.cost)
           ? result.usage.cost
           : null,
+      videoAiModel: models.videoModel,
+      sceneAudioAiModel: sceneAudioUrl ? models.videoModel : null,
     };
   } finally {
     await fs.rm(dir, { recursive: true, force: true }).catch(() => {});

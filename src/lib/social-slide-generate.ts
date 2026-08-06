@@ -1,7 +1,7 @@
 import type { Project, SocialMetadata, SocialSlide } from "@/lib/db/schema";
 import { avatarHintForPrompt, avatarReferenceImages } from "@/lib/avatar-block";
 import { generateImage } from "@/lib/openrouter/images";
-import { resolveProjectApiModels } from "@/lib/project-api-models";
+import { resolveProjectApiModels, imageModelSupportsPersonReferencePhotos } from "@/lib/project-api-models";
 import { fetchAvatarById } from "@/lib/avatar-block";
 import { buildSlideVisualPrompt } from "@/lib/social-prompts";
 import { getSocialImageAspectRatio } from "@/lib/social-aspect-ratio";
@@ -38,13 +38,17 @@ export async function generateSocialSlideImage(input: {
     }
   }
 
-  const referenceImages = [...clientRefs, ...avatarRefs];
-  const hasRefs = referenceImages.length > 0;
+  const attachAvatarRefs =
+    avatarRefs.length > 0 && imageModelSupportsPersonReferencePhotos(models.imageModel);
+  const envRefs = clientRefs;
+  const hasRefs = envRefs.length > 0 || avatarRefs.length > 0;
 
   const prompt = buildSlideVisualPrompt({
     project,
     slide,
-    avatarHint: avatar ? avatarHintForPrompt(avatar) : null,
+    avatarHint: avatar
+      ? avatarHintForPrompt(avatar, { referencePhotosAttached: attachAvatarRefs })
+      : null,
     dna,
     hasClientReference: clientRefs.length > 0,
   });
@@ -53,8 +57,8 @@ export async function generateSocialSlideImage(input: {
     prompt,
     model: models.imageModel,
     aspectRatio: getSocialImageAspectRatio(project.socialAspectRatio),
-    imageSize: "1K",
-    referenceImages: hasRefs ? referenceImages : undefined,
+    referenceImages: envRefs.length > 0 ? envRefs : undefined,
+    personReferenceImages: avatarRefs.length > 0 ? avatarRefs : undefined,
     referenceImagesFirst: hasRefs,
   });
 

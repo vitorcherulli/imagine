@@ -36,7 +36,7 @@ import {
 import { useToast } from "@/components/ui/use-toast";
 import { getVideoFormatSpec } from "@/lib/video-format";
 import { getSocialAspectRatioSpec } from "@/lib/social-aspect-ratio";
-import { isSocialProject, projectEditorHref } from "@/lib/social-content";
+import { isDubbingProject, isSocialProject, projectEditorHref } from "@/lib/social-content";
 import { cn } from "@/lib/utils";
 import { ImageIcon } from "lucide-react";
 
@@ -382,7 +382,7 @@ export function ProjectsLibrary({
               No projects in this view.
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
               {visibleProjects.map((p) => (
                 <ProjectCard
                   key={p.id}
@@ -462,6 +462,7 @@ function ProjectCard({
   onDragEnd: () => void;
 }) {
   const social = isSocialProject(project);
+  const dubbing = isDubbingProject(project);
   const fmt = social
     ? getSocialAspectRatioSpec(project.socialAspectRatio)
     : getVideoFormatSpec(project.videoFormat);
@@ -490,6 +491,10 @@ function ProjectCard({
             <span className="absolute left-2 top-2 z-10 rounded bg-background/90 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-foreground shadow-sm">
               Post
             </span>
+          ) : dubbing ? (
+            <span className="absolute left-2 top-2 z-10 rounded bg-background/90 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-foreground shadow-sm">
+              Dub
+            </span>
           ) : null}
           {coverUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
@@ -508,42 +513,44 @@ function ProjectCard({
             </div>
           )}
         </div>
-        <div className="px-3 py-2">
-          <h3 className="truncate text-sm font-medium">{project.title || "Untitled"}</h3>
-          <p className="line-clamp-2 text-2xs text-muted-foreground">{project.storyDescription}</p>
-          <p className="mt-1 text-2xs text-muted-foreground/80">
+        <div className="px-2.5 py-1.5">
+          <h3 className="truncate text-xs font-medium">{project.title || "Untitled"}</h3>
+          <p className="line-clamp-1 text-2xs text-muted-foreground">{project.storyDescription}</p>
+          <p className="mt-0.5 truncate text-2xs text-muted-foreground/80">
             {project.status}
             {social
               ? ` · ${project.postFormat}`
-              : ` · ${project.targetDurationSeconds}s`}
+              : dubbing
+                ? ` · ${(project.dubTargetLanguage ?? "?").toUpperCase()}`
+                : ` · ${project.targetDurationSeconds}s`}
             {folderName ? ` · ${folderName}` : ""}
           </p>
         </div>
       </Link>
       <div
-        className="flex items-center gap-1 border-t border-border px-2 py-1.5"
+        className="flex items-center gap-1 border-t border-border px-1.5 py-1"
         onClick={(e) => e.preventDefault()}
       >
         <Button
           variant="ghost"
           size="sm"
-          className="h-7 flex-1 text-2xs"
+          className="h-7 shrink-0 px-2 text-2xs"
           disabled={busy}
           onClick={onDuplicate}
+          title="Duplicate project"
         >
           {busy ? (
             <Loader2 className="h-3 w-3 animate-spin" />
           ) : (
             <Copy className="h-3 w-3" />
           )}
-          Duplicate
         </Button>
         <Select
           value={project.folderId ?? "__none__"}
           onValueChange={(v) => onMove(v === "__none__" ? null : v)}
           disabled={busy}
         >
-          <SelectTrigger className="h-7 w-[110px] text-2xs">
+          <SelectTrigger className="h-7 min-w-0 flex-1 text-2xs">
             <SelectValue placeholder="Folder" />
           </SelectTrigger>
           <SelectContent>

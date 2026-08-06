@@ -63,8 +63,8 @@ import {
   moveBlockLater,
 } from "@/lib/timeline-block-reorder";
 import { repairNarrationGroupsAfterReorder, rejoinAdjacentVisualCuts, attachVisualCutToNarrationGroup, detachVisualCutFromNarrationGroup, type NarrationJoinPlacement } from "@/lib/narration-group-reorder";
-import type { Avatar, Project, ProjectDna, StoryBlock, YoutubeMetadata } from "@/lib/db/schema";
-import type { ProjectApiModels } from "@/lib/project-api-models";
+import type { Avatar, Project, ProjectDna, Scenario, StoryBlock, YoutubeMetadata } from "@/lib/db/schema";
+import { resolveProjectApiModels, type ProjectApiModels } from "@/lib/project-api-models";
 import { getVideoFormatSpec, normalizeVideoFormat, type VideoFormat } from "@/lib/video-format";
 import { serializeStyleBible, type StyleBible, type StyleBibleBlockImages } from "@/lib/style-bible";
 import { normalizeCaptionMode, type CaptionMode } from "@/lib/captions";
@@ -106,6 +106,7 @@ interface Props {
   > | null;
   avatars: Avatar[];
   projectDna: ProjectDna[];
+  scenarios?: Scenario[];
   initialAvatar: Avatar | null;
 }
 
@@ -130,11 +131,13 @@ export function ProjectEditor({
   initialYoutubeMetadata = null,
   avatars,
   projectDna,
+  scenarios = [],
   initialAvatar,
 }: Props) {
   const router = useRouter();
   const { toast } = useToast();
   const [project, setProject] = React.useState<Project>(initialProject);
+  const projectApiModels = React.useMemo(() => resolveProjectApiModels(project), [project]);
   const [musicPanelOpen, setMusicPanelOpen] = React.useState(false);
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [projectSummaryCollapsed, setProjectSummaryCollapsed] = React.useState(false);
@@ -639,9 +642,14 @@ export function ProjectEditor({
     }
   }
 
-  async function setProjectBrief(patch: { projectDnaId?: string | null; storyDescription?: string }) {
+  async function setProjectBrief(patch: {
+    projectDnaId?: string | null;
+    scenarioId?: string | null;
+    storyDescription?: string;
+  }) {
     const previous = {
       projectDnaId: project.projectDnaId ?? null,
+      scenarioId: project.scenarioId ?? null,
       storyDescription: project.storyDescription,
     };
     setProject((prev) => patchProjectShallow(prev, patch));
@@ -2212,6 +2220,11 @@ export function ProjectEditor({
           avatars={avatars}
           projectAvatarId={project.avatarId ?? null}
           projectAvatarName={avatar?.name ?? null}
+          scenarios={scenarios}
+          projectScenarioId={project.scenarioId ?? null}
+          projectScenarioName={
+            scenarios.find((s) => s.id === project.scenarioId)?.name ?? null
+          }
           videoFormat={project.videoFormat}
           timelineExpanded={previewFloating}
           onPatched={handleBlockPatched}
@@ -2221,6 +2234,9 @@ export function ProjectEditor({
           onLeaveNarrationGroup={handleLeaveNarrationGroup}
           videoShortAlert={selectedVideoShortAlert}
           videoDurationAlerts={videoDurationAlerts}
+          projectImageModel={projectApiModels.imageModel}
+          projectVideoModel={projectApiModels.videoModel}
+          projectTtsModel={projectApiModels.ttsModel}
         />
       </div>
       )}
@@ -2239,6 +2255,7 @@ export function ProjectEditor({
         onOpenChange={setSettingsOpen}
         project={project}
         projectDnaItems={projectDna}
+        scenarioItems={scenarios}
         onVideoFormatChange={setProjectVideoFormat}
         onCaptionModeChange={setProjectCaptionMode}
         onCutSettingsChange={setProjectCutSettings}

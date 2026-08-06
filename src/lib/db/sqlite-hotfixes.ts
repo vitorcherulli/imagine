@@ -69,6 +69,100 @@ export const SQLITE_TABLE_HOTFIXES = [
     FOREIGN KEY (project_id) REFERENCES projects(id) ON UPDATE no action ON DELETE cascade
   )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS social_metadata_project_id_unique ON social_metadata (project_id)`,
+  `CREATE TABLE IF NOT EXISTS scenarios (
+    id text PRIMARY KEY NOT NULL,
+    user_id text NOT NULL,
+    name text NOT NULL,
+    description text,
+    image_urls text DEFAULT '[]' NOT NULL,
+    primary_image_url text,
+    created_at integer DEFAULT (unixepoch()) NOT NULL,
+    updated_at integer DEFAULT (unixepoch()) NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS dubbing_sources (
+    id text PRIMARY KEY NOT NULL,
+    project_id text NOT NULL,
+    source_type text NOT NULL,
+    source_url text NOT NULL,
+    extracted_audio_url text,
+    original_filename text,
+    mime_type text,
+    size_bytes integer,
+    duration_seconds real,
+    detected_language text,
+    transcript_engine text,
+    transcribed_at integer,
+    created_at integer DEFAULT (unixepoch()) NOT NULL,
+    updated_at integer DEFAULT (unixepoch()) NOT NULL,
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON UPDATE no action ON DELETE cascade
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS dubbing_sources_project_id_unique ON dubbing_sources (project_id)`,
+  `CREATE TABLE IF NOT EXISTS dubbing_segments (
+    id text PRIMARY KEY NOT NULL,
+    project_id text NOT NULL,
+    position integer NOT NULL,
+    start_seconds real NOT NULL,
+    end_seconds real NOT NULL,
+    source_text text DEFAULT '' NOT NULL,
+    source_language text,
+    translated_text text DEFAULT '' NOT NULL,
+    target_language text,
+    tts_audio_url text,
+    tts_duration_seconds real,
+    tts_model text,
+    tts_voice text,
+    stretch_ratio real,
+    status text DEFAULT 'pending' NOT NULL,
+    error_message text,
+    speaker_id text,
+    created_at integer DEFAULT (unixepoch()) NOT NULL,
+    updated_at integer DEFAULT (unixepoch()) NOT NULL,
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON UPDATE no action ON DELETE cascade
+  )`,
+  `CREATE INDEX IF NOT EXISTS dubbing_segments_project_position ON dubbing_segments (project_id, position)`,
+  `CREATE TABLE IF NOT EXISTS dubbing_renders (
+    id text PRIMARY KEY NOT NULL,
+    project_id text NOT NULL,
+    kind text NOT NULL,
+    url text NOT NULL,
+    target_language text,
+    background_gain real DEFAULT 0 NOT NULL,
+    duration_seconds real,
+    size_bytes integer,
+    created_at integer DEFAULT (unixepoch()) NOT NULL,
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON UPDATE no action ON DELETE cascade
+  )`,
+  `CREATE INDEX IF NOT EXISTS dubbing_renders_project_created ON dubbing_renders (project_id, created_at DESC)`,
+  `CREATE TABLE IF NOT EXISTS dubbing_tracks (
+    id text PRIMARY KEY NOT NULL,
+    project_id text NOT NULL,
+    language_id text NOT NULL,
+    sort_order integer DEFAULT 0 NOT NULL,
+    tts_voice text,
+    created_at integer DEFAULT (unixepoch()) NOT NULL,
+    updated_at integer DEFAULT (unixepoch()) NOT NULL,
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON UPDATE no action ON DELETE cascade
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS dubbing_tracks_project_language ON dubbing_tracks (project_id, language_id)`,
+  `CREATE TABLE IF NOT EXISTS dubbing_segment_locales (
+    id text PRIMARY KEY NOT NULL,
+    segment_id text NOT NULL,
+    track_id text NOT NULL,
+    translated_text text DEFAULT '' NOT NULL,
+    tts_audio_url text,
+    tts_duration_seconds real,
+    tts_model text,
+    tts_voice text,
+    stretch_ratio real,
+    status text DEFAULT 'pending' NOT NULL,
+    error_message text,
+    created_at integer DEFAULT (unixepoch()) NOT NULL,
+    updated_at integer DEFAULT (unixepoch()) NOT NULL,
+    FOREIGN KEY (segment_id) REFERENCES dubbing_segments(id) ON UPDATE no action ON DELETE cascade,
+    FOREIGN KEY (track_id) REFERENCES dubbing_tracks(id) ON UPDATE no action ON DELETE cascade
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS dubbing_segment_locales_segment_track ON dubbing_segment_locales (segment_id, track_id)`,
+  `CREATE INDEX IF NOT EXISTS dubbing_segment_locales_track ON dubbing_segment_locales (track_id)`,
 ] as const;
 
 /** Idempotent ALTERs for columns added after first local deploy. */
@@ -125,6 +219,11 @@ export const SQLITE_COLUMN_HOTFIXES = [
   },
   {
     table: "story_blocks",
+    column: "video_camera_angle",
+    sql: `ALTER TABLE story_blocks ADD COLUMN video_camera_angle TEXT NOT NULL DEFAULT 'auto'`,
+  },
+  {
+    table: "story_blocks",
     column: "keyframe_fit_mode",
     sql: `ALTER TABLE story_blocks ADD COLUMN keyframe_fit_mode TEXT NOT NULL DEFAULT 'cover'`,
   },
@@ -137,6 +236,26 @@ export const SQLITE_COLUMN_HOTFIXES = [
     table: "story_blocks",
     column: "open_router_cost_usd",
     sql: `ALTER TABLE story_blocks ADD COLUMN open_router_cost_usd REAL`,
+  },
+  {
+    table: "story_blocks",
+    column: "keyframe_ai_model",
+    sql: `ALTER TABLE story_blocks ADD COLUMN keyframe_ai_model TEXT`,
+  },
+  {
+    table: "story_blocks",
+    column: "video_ai_model",
+    sql: `ALTER TABLE story_blocks ADD COLUMN video_ai_model TEXT`,
+  },
+  {
+    table: "story_blocks",
+    column: "narration_ai_model",
+    sql: `ALTER TABLE story_blocks ADD COLUMN narration_ai_model TEXT`,
+  },
+  {
+    table: "story_blocks",
+    column: "scene_audio_ai_model",
+    sql: `ALTER TABLE story_blocks ADD COLUMN scene_audio_ai_model TEXT`,
   },
   {
     table: "projects",
@@ -287,6 +406,111 @@ export const SQLITE_COLUMN_HOTFIXES = [
     table: "social_slides",
     column: "reference_asset_id",
     sql: `ALTER TABLE social_slides ADD COLUMN reference_asset_id text`,
+  },
+  {
+    table: "project_dna",
+    column: "llm_model",
+    sql: `ALTER TABLE project_dna ADD COLUMN llm_model text`,
+  },
+  {
+    table: "project_dna",
+    column: "image_model",
+    sql: `ALTER TABLE project_dna ADD COLUMN image_model text`,
+  },
+  {
+    table: "project_dna",
+    column: "video_model",
+    sql: `ALTER TABLE project_dna ADD COLUMN video_model text`,
+  },
+  {
+    table: "project_dna",
+    column: "video_clip_audio",
+    sql: `ALTER TABLE project_dna ADD COLUMN video_clip_audio text`,
+  },
+  {
+    table: "project_dna",
+    column: "tts_model",
+    sql: `ALTER TABLE project_dna ADD COLUMN tts_model text`,
+  },
+  {
+    table: "project_dna",
+    column: "tts_voice",
+    sql: `ALTER TABLE project_dna ADD COLUMN tts_voice text`,
+  },
+  {
+    table: "project_dna",
+    column: "video_format",
+    sql: `ALTER TABLE project_dna ADD COLUMN video_format text`,
+  },
+  {
+    table: "project_dna",
+    column: "cut_pace",
+    sql: `ALTER TABLE project_dna ADD COLUMN cut_pace text`,
+  },
+  {
+    table: "project_dna",
+    column: "script_language",
+    sql: `ALTER TABLE project_dna ADD COLUMN script_language text`,
+  },
+  {
+    table: "project_dna",
+    column: "target_duration_seconds",
+    sql: `ALTER TABLE project_dna ADD COLUMN target_duration_seconds integer`,
+  },
+  {
+    table: "projects",
+    column: "scenario_id",
+    sql: `ALTER TABLE projects ADD COLUMN scenario_id text`,
+  },
+  {
+    table: "story_blocks",
+    column: "scenario_id",
+    sql: `ALTER TABLE story_blocks ADD COLUMN scenario_id text`,
+  },
+  {
+    table: "projects",
+    column: "dub_target_language",
+    sql: `ALTER TABLE projects ADD COLUMN dub_target_language text`,
+  },
+  {
+    table: "projects",
+    column: "dub_background_gain",
+    sql: `ALTER TABLE projects ADD COLUMN dub_background_gain real NOT NULL DEFAULT 0`,
+  },
+  {
+    table: "projects",
+    column: "dub_use_voice_clone",
+    sql: `ALTER TABLE projects ADD COLUMN dub_use_voice_clone integer NOT NULL DEFAULT 0`,
+  },
+  {
+    table: "projects",
+    column: "dub_cloned_voice_id",
+    sql: `ALTER TABLE projects ADD COLUMN dub_cloned_voice_id text`,
+  },
+  {
+    table: "projects",
+    column: "dub_pipeline_stage",
+    sql: `ALTER TABLE projects ADD COLUMN dub_pipeline_stage text`,
+  },
+  {
+    table: "projects",
+    column: "dub_pipeline_message",
+    sql: `ALTER TABLE projects ADD COLUMN dub_pipeline_message text`,
+  },
+  {
+    table: "projects",
+    column: "dub_pipeline_current",
+    sql: `ALTER TABLE projects ADD COLUMN dub_pipeline_current integer`,
+  },
+  {
+    table: "projects",
+    column: "dub_pipeline_total",
+    sql: `ALTER TABLE projects ADD COLUMN dub_pipeline_total integer`,
+  },
+  {
+    table: "dubbing_renders",
+    column: "track_id",
+    sql: `ALTER TABLE dubbing_renders ADD COLUMN track_id text`,
   },
 ] as const;
 

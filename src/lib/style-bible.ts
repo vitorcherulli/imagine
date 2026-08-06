@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Avatar, Project, StoryBlock } from "./db/schema";
 import { normalizeProjectIdentity } from "./project-identity";
+import { visualStylePromptCue } from "./project-creative-options";
 import {
   ENGLISH_ONLY_GENERATION_LINE,
   ENGLISH_VISUAL_PROMPT_LINE,
@@ -353,7 +354,7 @@ export function buildEditorialReferencePrompt(input: {
   const lines = [
     formatStyleBibleForPrompt(bible).trim(),
     "",
-    `Visual style: ${project.visualStyle}.`,
+    `Visual style: ${visualStylePromptCue(project.visualStyle)}.`,
     `Genre: ${project.genre}.`,
     ...(identity ? [`Series/brand identity: ${identity}.`] : []),
   ];
@@ -408,7 +409,7 @@ export function buildEditorialBlockReferencePrompt(input: {
   const lines = [
     formatStyleBibleForPrompt(bible).trim(),
     "",
-    `Visual style: ${project.visualStyle}.`,
+    `Visual style: ${visualStylePromptCue(project.visualStyle)}.`,
     `Genre: ${project.genre}.`,
     ...(identity ? [`Series/brand identity: ${identity}.`] : []),
     "",
@@ -439,6 +440,7 @@ export interface SceneVisualInput {
   block: Pick<StoryBlock, "visualPrompt" | "locationTag">;
   bible: StyleBible | null;
   avatarHint?: string;
+  scenarioHint?: string;
   hasEditorialReference?: boolean;
 }
 
@@ -447,8 +449,16 @@ export interface SceneVisualInput {
  * Editorial line (bible) + this scene's unique location + shot description.
  */
 export function buildSceneVisualPrompt(input: SceneVisualInput): string {
-  const { project, block, bible, avatarHint = "", hasEditorialReference = false } = input;
-  const styleHint = project.visualStyle ? `Visual style: ${project.visualStyle}. ` : "";
+  const {
+    project,
+    block,
+    bible,
+    avatarHint = "",
+    scenarioHint = "",
+    hasEditorialReference = false,
+  } = input;
+  const styleCue = visualStylePromptCue(project.visualStyle);
+  const styleHint = styleCue ? `Visual style: ${styleCue}. ` : "";
   const locationLabel = formatLocationTag(block.locationTag);
   const parts: string[] = [];
 
@@ -459,7 +469,7 @@ export function buildSceneVisualPrompt(input: SceneVisualInput): string {
     parts.push(`Scene location (unique setting for THIS shot): ${locationLabel}.`);
   }
 
-  parts.push(`${styleHint}${block.visualPrompt}${avatarHint}`);
+  parts.push(`${styleHint}${block.visualPrompt}${avatarHint}${scenarioHint}`);
 
   if (hasEditorialReference) {
     parts.push(

@@ -4,7 +4,6 @@ import {
   type ActiveTimelineBlock,
 } from "@/lib/timeline-free-edit";
 import { isStoryBlockPause, resolveNeighborVisualBlock } from "@/lib/script-pause";
-import { stableFullVideoUrl } from "@/lib/preview-video-cache";
 
 export type TimelineVisualBlock = Pick<
   StoryBlock,
@@ -53,11 +52,16 @@ export function timelineStillUrl(visual: TimelineVisualBlock | null | undefined)
   return timelineThumbCandidates(visual)[0] ?? null;
 }
 
-/** In-player video — full `video.mp4` only (never the proxy; proxies caused drift vs keyframes). */
+/**
+ * In-player video — full `video.mp4` only (never the proxy; proxies caused drift vs keyframes).
+ * The `?v=` cache buster is preserved: a regenerated block gets a new buster, which changes the
+ * `<video>` src and forces a reload. Stripping it made the URL identical after regen, so the
+ * player kept serving the stale cached video.
+ */
 export function timelinePlaybackVideoUrl(
   visual: TimelineVisualBlock | null | undefined,
 ): string | null {
   const url = visual?.videoUrl?.trim();
   if (!url) return null;
-  return stableFullVideoUrl(url);
+  return url;
 }

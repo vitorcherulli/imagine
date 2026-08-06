@@ -4,6 +4,7 @@ import { z } from "zod";
 import { db, schema } from "@/lib/db";
 import { tryUser } from "@/lib/auth";
 import { saveProjectDnaLogoBuffer, deleteProjectDnaMedia, deleteMediaByPublicUrl } from "@/lib/storage";
+import { dnaProjectDefaultsSchema } from "@/lib/dna-project-defaults";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -28,17 +29,19 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   return NextResponse.json({ projectDna: row });
 }
 
-const patchSchema = z.object({
-  name: z.string().min(1).max(80).optional(),
-  description: z.string().max(4000).nullable().optional(),
-  removeLogo: z.boolean().optional(),
-  genre: z.string().max(60).nullable().optional(),
-  visualStyle: z.string().max(60).nullable().optional(),
-  voiceTone: z.string().max(60).nullable().optional(),
-  colorPalette: z.string().max(500).nullable().optional(),
-  visualMood: z.string().max(1000).nullable().optional(),
-  learnedNotes: z.string().max(8000).nullable().optional(),
-});
+const patchSchema = z
+  .object({
+    name: z.string().min(1).max(80).optional(),
+    description: z.string().max(4000).nullable().optional(),
+    removeLogo: z.boolean().optional(),
+    genre: z.string().max(60).nullable().optional(),
+    visualStyle: z.string().max(60).nullable().optional(),
+    voiceTone: z.string().max(60).nullable().optional(),
+    colorPalette: z.string().max(500).nullable().optional(),
+    visualMood: z.string().max(1000).nullable().optional(),
+    learnedNotes: z.string().max(8000).nullable().optional(),
+  })
+  .merge(dnaProjectDefaultsSchema);
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   const userId = await tryUser();
@@ -87,13 +90,25 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     logoUrl = null;
   }
 
-  const styleFields: Record<string, string | null> = {};
+  const styleFields: Record<string, string | number | null> = {};
   if (patch.genre !== undefined) styleFields.genre = patch.genre;
   if (patch.visualStyle !== undefined) styleFields.visualStyle = patch.visualStyle;
   if (patch.voiceTone !== undefined) styleFields.voiceTone = patch.voiceTone;
   if (patch.colorPalette !== undefined) styleFields.colorPalette = patch.colorPalette;
   if (patch.visualMood !== undefined) styleFields.visualMood = patch.visualMood;
   if (patch.learnedNotes !== undefined) styleFields.learnedNotes = patch.learnedNotes;
+  if (patch.llmModel !== undefined) styleFields.llmModel = patch.llmModel;
+  if (patch.imageModel !== undefined) styleFields.imageModel = patch.imageModel;
+  if (patch.videoModel !== undefined) styleFields.videoModel = patch.videoModel;
+  if (patch.videoClipAudio !== undefined) styleFields.videoClipAudio = patch.videoClipAudio;
+  if (patch.ttsModel !== undefined) styleFields.ttsModel = patch.ttsModel;
+  if (patch.ttsVoice !== undefined) styleFields.ttsVoice = patch.ttsVoice;
+  if (patch.videoFormat !== undefined) styleFields.videoFormat = patch.videoFormat;
+  if (patch.cutPace !== undefined) styleFields.cutPace = patch.cutPace;
+  if (patch.scriptLanguage !== undefined) styleFields.scriptLanguage = patch.scriptLanguage;
+  if (patch.targetDurationSeconds !== undefined) {
+    styleFields.targetDurationSeconds = patch.targetDurationSeconds;
+  }
 
   await db
     .update(schema.projectDna)

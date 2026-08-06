@@ -70,14 +70,24 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         ? ceilBlockDurationSeconds(probed)
         : owned.block.durationSeconds;
 
-      await setBlockStatus(blockId, { audioUrl: withCacheBuster(audioUrl), durationSeconds });
+      await setBlockStatus(blockId, {
+        audioUrl: withCacheBuster(audioUrl),
+        durationSeconds,
+        narrationAiModel: models.ttsModel,
+      });
 
       const blockForVideo = {
         ...owned.block,
         audioUrl,
         durationSeconds,
       };
-      const { videoUrl, sceneAudioUrl, openRouterCostUsd } = await generateBlockVideo({
+      const {
+        videoUrl,
+        sceneAudioUrl,
+        openRouterCostUsd,
+        videoAiModel,
+        sceneAudioAiModel,
+      } = await generateBlockVideo({
         project: owned.project,
         block: blockForVideo,
       });
@@ -87,6 +97,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         sceneAudioUrl,
         durationSeconds,
         openRouterCostUsd,
+        videoAiModel,
+        sceneAudioAiModel,
         status: "ready",
       });
     } catch (err) {

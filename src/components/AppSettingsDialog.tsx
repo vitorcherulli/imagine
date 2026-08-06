@@ -18,8 +18,8 @@ import { APP_THEME_OPTIONS } from "@/lib/app-theme";
 import {
   loadPlatformPreviewDefaults,
   savePlatformPreviewDefaults,
-  savePlatformPreviewWarmup,
 } from "@/lib/app-preview-preferences";
+import { DEFAULT_PLATFORM_PREVIEW } from "@/lib/preview-settings";
 import { previewModeLabel } from "@/lib/preview-settings";
 import { clearBlockPreviewCache } from "@/lib/preview-video-cache";
 import { useToast } from "@/components/ui/use-toast";
@@ -29,7 +29,7 @@ export function AppSettingsDialog({ collapsed = false }: { collapsed?: boolean }
   const { theme, setTheme } = useAppTheme();
   const { toast } = useToast();
   const [open, setOpen] = React.useState(false);
-  const [previewPrefs, setPreviewPrefs] = React.useState(loadPlatformPreviewDefaults);
+  const [previewPrefs, setPreviewPrefs] = React.useState(DEFAULT_PLATFORM_PREVIEW);
   const [cleaningPreviews, setCleaningPreviews] = React.useState(false);
 
   React.useEffect(() => {
@@ -102,31 +102,10 @@ export function AppSettingsDialog({ collapsed = false }: { collapsed?: boolean }
                 savePlatformPreviewDefaults(next);
               }}
             />
-            {previewPrefs.mode === "proxy" && (
-              <label className="flex cursor-pointer items-start gap-2 rounded-md border border-border px-3 py-2">
-                <input
-                  type="checkbox"
-                  className="mt-0.5"
-                  checked={previewPrefs.warmupEnabled}
-                  onChange={(e) => {
-                    const warmupEnabled = e.target.checked;
-                    const next = { ...previewPrefs, warmupEnabled };
-                    setPreviewPrefs(next);
-                    savePlatformPreviewWarmup(warmupEnabled);
-                  }}
-                />
-                <span className="min-w-0">
-                  <span className="block text-sm font-medium">Prepare previews in background</span>
-                  <span className="mt-0.5 block text-2xs text-muted-foreground">
-                    Generate low-res proxies while you edit — faster playback, more server work.
-                  </span>
-                </span>
-              </label>
-            )}
             <div className="rounded-md border border-border bg-muted/20 p-3">
               <p className="text-2xs text-muted-foreground">
-                Remove all low-res preview proxies from every project. Original export videos
-                are kept.
+                Clean up leftover preview files from the old proxy system. Original export
+                videos are kept.
               </p>
               <Button
                 type="button"

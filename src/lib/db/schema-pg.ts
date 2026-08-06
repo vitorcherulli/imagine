@@ -43,6 +43,7 @@ export const projects = pgTable("projects", {
   status: text("status").notNull().default("draft"),
   avatarId: text("avatar_id"),
   avatarIds: text("avatar_ids").default("[]"),
+  scenarioId: text("scenario_id"),
   styleBible: text("style_bible"),
   anchorImageUrl: text("anchor_image_url"),
   anchorImagePrompt: text("anchor_image_prompt"),
@@ -67,6 +68,14 @@ export const projects = pgTable("projects", {
   scriptDraftNotes: text("script_draft_notes"),
   scriptDraftStatus: text("script_draft_status").notNull().default("none"),
   scriptDraftVersion: integer("script_draft_version"),
+  dubTargetLanguage: text("dub_target_language"),
+  dubBackgroundGain: real("dub_background_gain").notNull().default(0),
+  dubUseVoiceClone: boolean("dub_use_voice_clone").notNull().default(false),
+  dubClonedVoiceId: text("dub_cloned_voice_id"),
+  dubPipelineStage: text("dub_pipeline_stage"),
+  dubPipelineMessage: text("dub_pipeline_message"),
+  dubPipelineCurrent: integer("dub_pipeline_current"),
+  dubPipelineTotal: integer("dub_pipeline_total"),
   createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
 });
@@ -141,6 +150,16 @@ export const projectDna = pgTable("project_dna", {
   voiceTone: text("voice_tone"),
   colorPalette: text("color_palette"),
   visualMood: text("visual_mood"),
+  llmModel: text("llm_model"),
+  imageModel: text("image_model"),
+  videoModel: text("video_model"),
+  videoClipAudio: text("video_clip_audio"),
+  ttsModel: text("tts_model"),
+  ttsVoice: text("tts_voice"),
+  videoFormat: text("video_format"),
+  cutPace: text("cut_pace"),
+  scriptLanguage: text("script_language"),
+  targetDurationSeconds: integer("target_duration_seconds"),
   learnedNotes: text("learned_notes"),
   galleryFolderId: text("gallery_folder_id"),
   createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
@@ -148,6 +167,17 @@ export const projectDna = pgTable("project_dna", {
 });
 
 export const avatars = pgTable("avatars", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  name: text("name").notNull(),
+  description: text("description"),
+  imageUrls: text("image_urls").notNull().default("[]"),
+  primaryImageUrl: text("primary_image_url"),
+  createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
+});
+
+export const scenarios = pgTable("scenarios", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull(),
   name: text("name").notNull(),
@@ -182,11 +212,17 @@ export const storyBlocks = pgTable("story_blocks", {
   narrationTimelineStart: real("narration_timeline_start"),
   sceneTimelineStart: real("scene_timeline_start"),
   videoShotCount: integer("video_shot_count").notNull().default(1),
+  videoCameraAngle: text("video_camera_angle").notNull().default("auto"),
   keyframeFitMode: text("keyframe_fit_mode").notNull().default("cover"),
   stockVideoId: text("stock_video_id"),
   openRouterCostUsd: real("open_router_cost_usd"),
+  keyframeAiModel: text("keyframe_ai_model"),
+  videoAiModel: text("video_ai_model"),
+  narrationAiModel: text("narration_ai_model"),
+  sceneAudioAiModel: text("scene_audio_ai_model"),
   avatarId: text("avatar_id"),
   characterName: text("character_name"),
+  scenarioId: text("scenario_id"),
   status: text("status").notNull().default("draft"),
   errorMessage: text("error_message"),
   createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
@@ -273,6 +309,97 @@ export const exports = pgTable("exports", {
   createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
 });
 
+export const dubbingSources = pgTable("dubbing_sources", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id")
+    .notNull()
+    .unique()
+    .references(() => projects.id, { onDelete: "cascade" }),
+  sourceType: text("source_type").notNull(),
+  sourceUrl: text("source_url").notNull(),
+  extractedAudioUrl: text("extracted_audio_url"),
+  originalFilename: text("original_filename"),
+  mimeType: text("mime_type"),
+  sizeBytes: integer("size_bytes"),
+  durationSeconds: real("duration_seconds"),
+  detectedLanguage: text("detected_language"),
+  transcriptEngine: text("transcript_engine"),
+  transcribedAt: timestamp("transcribed_at", { mode: "date" }),
+  createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
+});
+
+export const dubbingSegments = pgTable("dubbing_segments", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => projects.id, { onDelete: "cascade" }),
+  position: integer("position").notNull(),
+  startSeconds: real("start_seconds").notNull(),
+  endSeconds: real("end_seconds").notNull(),
+  sourceText: text("source_text").notNull().default(""),
+  sourceLanguage: text("source_language"),
+  translatedText: text("translated_text").notNull().default(""),
+  targetLanguage: text("target_language"),
+  ttsAudioUrl: text("tts_audio_url"),
+  ttsDurationSeconds: real("tts_duration_seconds"),
+  ttsModel: text("tts_model"),
+  ttsVoice: text("tts_voice"),
+  stretchRatio: real("stretch_ratio"),
+  status: text("status").notNull().default("pending"),
+  errorMessage: text("error_message"),
+  speakerId: text("speaker_id"),
+  createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
+});
+
+export const dubbingRenders = pgTable("dubbing_renders", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => projects.id, { onDelete: "cascade" }),
+  kind: text("kind").notNull(),
+  url: text("url").notNull(),
+  targetLanguage: text("target_language"),
+  trackId: text("track_id"),
+  backgroundGain: real("background_gain").notNull().default(0),
+  durationSeconds: real("duration_seconds"),
+  sizeBytes: integer("size_bytes"),
+  createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+});
+
+export const dubbingTracks = pgTable("dubbing_tracks", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => projects.id, { onDelete: "cascade" }),
+  languageId: text("language_id").notNull(),
+  sortOrder: integer("sort_order").notNull().default(0),
+  ttsVoice: text("tts_voice"),
+  createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
+});
+
+export const dubbingSegmentLocales = pgTable("dubbing_segment_locales", {
+  id: text("id").primaryKey(),
+  segmentId: text("segment_id")
+    .notNull()
+    .references(() => dubbingSegments.id, { onDelete: "cascade" }),
+  trackId: text("track_id")
+    .notNull()
+    .references(() => dubbingTracks.id, { onDelete: "cascade" }),
+  translatedText: text("translated_text").notNull().default(""),
+  ttsAudioUrl: text("tts_audio_url"),
+  ttsDurationSeconds: real("tts_duration_seconds"),
+  ttsModel: text("tts_model"),
+  ttsVoice: text("tts_voice"),
+  stretchRatio: real("stretch_ratio"),
+  status: text("status").notNull().default("pending"),
+  errorMessage: text("error_message"),
+  createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
+});
+
 export type ProjectFolder = typeof projectFolders.$inferSelect;
 export type NewProjectFolder = typeof projectFolders.$inferInsert;
 export type MediaLibraryFolder = typeof mediaLibraryFolders.$inferSelect;
@@ -295,3 +422,15 @@ export type ProjectDna = typeof projectDna.$inferSelect;
 export type NewProjectDna = typeof projectDna.$inferInsert;
 export type Avatar = typeof avatars.$inferSelect;
 export type NewAvatar = typeof avatars.$inferInsert;
+export type Scenario = typeof scenarios.$inferSelect;
+export type NewScenario = typeof scenarios.$inferInsert;
+export type DubbingSource = typeof dubbingSources.$inferSelect;
+export type NewDubbingSource = typeof dubbingSources.$inferInsert;
+export type DubbingSegment = typeof dubbingSegments.$inferSelect;
+export type NewDubbingSegment = typeof dubbingSegments.$inferInsert;
+export type DubbingRender = typeof dubbingRenders.$inferSelect;
+export type NewDubbingRender = typeof dubbingRenders.$inferInsert;
+export type DubbingTrack = typeof dubbingTracks.$inferSelect;
+export type NewDubbingTrack = typeof dubbingTracks.$inferInsert;
+export type DubbingSegmentLocale = typeof dubbingSegmentLocales.$inferSelect;
+export type NewDubbingSegmentLocale = typeof dubbingSegmentLocales.$inferInsert;

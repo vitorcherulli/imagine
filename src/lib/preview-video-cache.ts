@@ -1,3 +1,9 @@
+/**
+ * @deprecated Preview proxy playback was removed — the player always plays the
+ * full `video.mp4`. This client-side proxy resolution/cache is no longer wired
+ * into playback (`resolvePreviewSettings` forces `useProxy=false`). Kept only so
+ * existing imports keep compiling. Do not add new call sites.
+ */
 import {
   VIDEO_PREVIEW_FILENAME,
   previewVideoUrlFromFullVideoUrl,

@@ -254,6 +254,9 @@ async function requestSpeechOnce(input: {
   }
 
   if (gemini || format === "pcm") {
+    if (buffer.length >= 12 && buffer.subarray(0, 4).toString("ascii") === "RIFF") {
+      return { buffer, filename: "audio.wav" };
+    }
     return { buffer: pcmToWav(buffer), filename: "audio.wav" };
   }
   return { buffer, filename: "audio.mp3" };

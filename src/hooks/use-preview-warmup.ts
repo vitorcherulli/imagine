@@ -24,6 +24,10 @@ function videoBlocksSignature(blocks: Block[]): string {
 }
 
 /**
+ * @deprecated Preview proxies are no longer generated or played. This hook is a
+ * no-op in practice because it is gated by `previewSettings.warmupEnabled`,
+ * which `resolvePreviewSettings` now forces to `false`. Kept for API stability.
+ *
  * Proactively generates low-res preview proxies in the background.
  * Only warms clips near the playhead — never the entire timeline at once.
  */

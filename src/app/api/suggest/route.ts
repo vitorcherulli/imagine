@@ -18,7 +18,7 @@ const bodySchema = z.object({
   genre: z.string().min(1),
   visualStyle: z.string().min(1),
   voiceTone: z.string().min(1),
-  targetDurationSeconds: z.number().int().min(30).max(1800).optional(),
+  targetDurationSeconds: z.number().int().min(15).max(1800).optional(),
   videoFormat: z.enum(["horizontal", "vertical"]).optional(),
   projectDnaId: z.string().nullable().optional(),
   scriptLanguage: z.enum(["en", "pt", "es"]).optional(),

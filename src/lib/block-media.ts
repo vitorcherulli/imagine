@@ -30,7 +30,7 @@ export function patchAfterClearingMedia(
 
   switch (field) {
     case "keyframe":
-      return { ...base, keyframeUrl: null };
+      return { ...base, keyframeUrl: null, keyframeAiModel: null };
     case "video":
       return {
         ...base,
@@ -39,11 +39,13 @@ export function patchAfterClearingMedia(
         videoJobId: null,
         videoPollingUrl: null,
         stockVideoId: null,
+        videoAiModel: null,
+        sceneAudioAiModel: null,
       };
     case "audio":
-      return { ...base, audioUrl: null };
+      return { ...base, audioUrl: null, narrationAiModel: null };
     case "sceneAudio":
-      return { ...base, sceneAudioUrl: null };
+      return { ...base, sceneAudioUrl: null, sceneAudioAiModel: null };
   }
 }
 

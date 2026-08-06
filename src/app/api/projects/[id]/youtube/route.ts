@@ -10,7 +10,7 @@ import { normalizeProjectScriptLanguage } from "@/lib/project-language";
 import { buildYoutubeMetadataSystemPrompt } from "@/lib/story-prompts";
 import { generateImage } from "@/lib/openrouter/images";
 import { downloadToFile, saveBase64, deleteMediaByPublicUrl, mediaFileExists } from "@/lib/storage";
-import { resolveProjectApiModels } from "@/lib/project-api-models";
+import { resolveProjectApiModels, imageModelSupportsPersonReferencePhotos } from "@/lib/project-api-models";
 import {
   avatarReferenceImages,
   fetchAvatarById,
@@ -58,27 +58,27 @@ async function generateThumbnailUrl(
   avatar: Awaited<ReturnType<typeof fetchAvatarById>>,
 ): Promise<string | null> {
   const models = resolveProjectApiModels(project);
-  const referenceImages = avatar ? await avatarReferenceImages(avatar) : undefined;
-  const hasRefs = Boolean(referenceImages?.length);
+  const avatarRefs = avatar ? ((await avatarReferenceImages(avatar)) ?? []) : [];
+  const attachAvatarRefs =
+    avatarRefs.length > 0 && imageModelSupportsPersonReferencePhotos(models.imageModel);
   const prompt = buildCoverImagePrompt({
     basePrompt,
-    avatar: hasRefs ? avatar : null,
+    avatar: attachAvatarRefs ? avatar : null,
     visualStyle: project.visualStyle,
     thumbnailMode,
     selectedTitle,
   });
 
   console.info(
-    `[youtube] cover gen avatar=${avatar?.name ?? "none"} refs=${referenceImages?.length ?? 0}`,
+    `[youtube] cover gen avatar=${avatar?.name ?? "none"} refs=${attachAvatarRefs ? avatarRefs.length : 0}`,
   );
 
   const img = await generateImage({
     prompt,
     model: models.imageModel,
     aspectRatio: getAspectRatio(project.videoFormat),
-    imageSize: "1K",
-    ...(hasRefs
-      ? { referenceImages, referenceImagesFirst: true }
+    ...(attachAvatarRefs
+      ? { personReferenceImages: avatarRefs, referenceImagesFirst: true }
       : {}),
   });
 

@@ -1,6 +1,7 @@
 import type { ProjectScriptLanguage } from "./project-language";
 import type { VideoFormat } from "./video-format";
 import { isVideoFormat } from "./video-format";
+import type { ProjectApiModels } from "./project-api-models";
 
 export interface ProjectFormPreferences {
   projectDnaId?: string | null;
@@ -17,6 +18,8 @@ export interface ProjectFormPreferences {
   avatarId?: string;
   avatarIds?: string[];
   primaryAvatarId?: string | null;
+  /** Last-used API models/voice — fallback when no DNA is selected. */
+  apiModels?: ProjectApiModels;
 }
 
 const STORAGE_KEY = "imagine-new-project-prefs";

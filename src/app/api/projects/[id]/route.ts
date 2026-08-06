@@ -63,7 +63,7 @@ const patchSchema = z
     genre: z.string().optional(),
     visualStyle: z.string().optional(),
     voiceTone: z.string().optional(),
-    targetDurationSeconds: z.number().int().min(30).max(1800).optional(),
+    targetDurationSeconds: z.number().int().min(15).max(1800).optional(),
     videoFormat: z.enum(["horizontal", "vertical"]).optional(),
     cutPace: z.enum(["calm", "balanced", "dynamic", "hyper"]).optional(),
     narrationMode: z.enum(["continuous"]).optional(),
@@ -71,6 +71,7 @@ const patchSchema = z
     status: z.string().optional(),
     avatarId: z.string().nullable().optional(),
     avatarIds: z.array(z.string()).optional(),
+    scenarioId: z.string().nullable().optional(),
     musicPrompt: z.string().min(1).max(1500).nullable().optional(),
     musicVolume: z.number().int().min(0).max(100).optional(),
     musicStartSeconds: z.number().min(0).max(600).optional(),
@@ -123,6 +124,20 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if (parsed.data.folderId) {
     const folder = await getOwnedFolder(parsed.data.folderId, userId);
     if (!folder) return NextResponse.json({ error: "Invalid folder" }, { status: 400 });
+  }
+
+  if (parsed.data.scenarioId) {
+    const [scenario] = await db
+      .select({ id: schema.scenarios.id })
+      .from(schema.scenarios)
+      .where(
+        and(
+          eq(schema.scenarios.id, parsed.data.scenarioId),
+          eq(schema.scenarios.userId, userId),
+        ),
+      )
+      .limit(1);
+    if (!scenario) return NextResponse.json({ error: "Invalid scenario" }, { status: 400 });
   }
 
   const patch: Record<string, unknown> = { ...parsed.data, updatedAt: new Date() };

@@ -4,12 +4,17 @@ import { getBlockForUser, setBlockStatus } from "@/lib/block-helpers";
 import { generateImage } from "@/lib/openrouter/images";
 import { saveBuffer, deleteMediaByPublicUrl, withCacheBuster } from "@/lib/storage";
 import { fitImageBufferToVideoFormat } from "@/lib/ffmpeg";
-import { resolveProjectApiModels } from "@/lib/project-api-models";
+import { resolveProjectApiModels, imageModelSupportsPersonReferencePhotos } from "@/lib/project-api-models";
 import {
   avatarHintForPrompt,
   avatarReferenceImages,
   resolveBlockAvatar,
 } from "@/lib/avatar-block";
+import {
+  resolveBlockScenario,
+  scenarioHintForPrompt,
+  scenarioReferenceImages,
+} from "@/lib/scenario-block";
 import { getAspectRatio } from "@/lib/video-format";
 import {
   buildSceneVisualPrompt,
@@ -34,28 +39,34 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
     try {
       const bible = parseStyleBible(owned.project.styleBible);
       const avatar = await resolveBlockAvatar(owned.block, owned.project);
-      const avatarHint = avatarHintForPrompt(avatar);
       const avatarRefs = (await avatarReferenceImages(avatar)) ?? [];
+
+      const scenario = await resolveBlockScenario(owned.block, owned.project);
+      const scenarioHint = scenarioHintForPrompt(scenario);
+      const scenarioRefs = (await scenarioReferenceImages(scenario)) ?? [];
 
       const editorialRefs = await loadEditorialReferenceDataUrls(owned.project);
 
-      const referenceImages = [...editorialRefs, ...avatarRefs];
+      const models = resolveProjectApiModels(owned.project);
+      const attachAvatarRefs =
+        avatarRefs.length > 0 && imageModelSupportsPersonReferencePhotos(models.imageModel);
 
       const prompt = buildSceneVisualPrompt({
         project: owned.project,
         block: owned.block,
         bible,
-        avatarHint,
+        avatarHint: avatarHintForPrompt(avatar, { referencePhotosAttached: attachAvatarRefs }),
+        scenarioHint,
         hasEditorialReference: editorialRefs.length > 0,
       });
 
-      const models = resolveProjectApiModels(owned.project);
+      const envRefs = [...editorialRefs, ...scenarioRefs];
       const img = await generateImage({
         prompt,
         model: models.imageModel,
         aspectRatio: getAspectRatio(owned.project.videoFormat),
-        imageSize: "1K",
-        referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
+        referenceImages: envRefs.length > 0 ? envRefs : undefined,
+        personReferenceImages: avatarRefs.length > 0 ? avatarRefs : undefined,
       });
       let rawBuffer: Buffer;
       if (img.b64) {
@@ -77,7 +88,11 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
       }
       const savedUrl = await saveBuffer(owned.project.id, owned.block.id, "keyframe.png", framed);
       const url = withCacheBuster(savedUrl);
-      await setBlockStatus(params.id, { keyframeUrl: url, status: "image_ready" });
+      await setBlockStatus(params.id, {
+        keyframeUrl: url,
+        keyframeAiModel: models.imageModel,
+        status: "image_ready",
+      });
       registerMediaLibraryAssetSafe({
         userId,
         url,

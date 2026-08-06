@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Sparkles, Loader2, TrendingUp, Crown, Award } from "lucide-react";
-import type { Avatar, ProjectDna } from "@/lib/db/schema";
+import type { Avatar, ProjectDna, Scenario } from "@/lib/db/schema";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,6 +28,7 @@ import {
 } from "@/lib/project-form-preferences";
 import { AvatarCastPicker, type AvatarCastValue } from "@/components/AvatarCastPicker";
 import { ProjectDnaPicker } from "@/components/ProjectDnaPicker";
+import { ScenarioPicker } from "@/components/ScenarioPicker";
 import { IconChipPicker } from "@/components/IconChipPicker";
 import {
   PROJECT_GENRE_IDS,
@@ -65,6 +66,7 @@ import type {
 } from "@/lib/story-suggestions-server";
 import { cn } from "@/lib/utils";
 import { dnaStyleDefaultsForForms } from "@/lib/dna-style";
+import { readDnaProjectDefaults } from "@/lib/dna-project-defaults";
 
 
 const TONES = [
@@ -267,16 +269,19 @@ function SuggestSectionHeader({
 export function NewProjectForm({
   avatars = [],
   projectDna = [],
+  scenarios = [],
   defaultDnaId = null,
 }: {
   avatars?: Avatar[];
   projectDna?: ProjectDna[];
+  scenarios?: Scenario[];
   defaultDnaId?: string | null;
 }) {
   const router = useRouter();
   const { toast } = useToast();
   const [title, setTitle] = React.useState("");
   const [projectDnaId, setProjectDnaId] = React.useState<string | null>(defaultDnaId);
+  const [scenarioId, setScenarioId] = React.useState<string | null>(null);
   const [storyDescription, setStoryDescription] = React.useState("");
   const [genre, setGenre] = React.useState("Children");
   const [visualStyle, setVisualStyle] = React.useState("3D Render");
@@ -300,10 +305,50 @@ export function NewProjectForm({
   const [trendsMeta, setTrendsMeta] = React.useState<TrendSuggestionsMeta | null>(null);
   const [prefsLoaded, setPrefsLoaded] = React.useState(false);
 
+  const applyDnaDefaults = React.useCallback((dna: ProjectDna) => {
+    const style = dnaStyleDefaultsForForms(dna);
+    if (style.genre && PROJECT_GENRE_IDS.includes(style.genre)) setGenre(style.genre);
+    if (style.visualStyle && PROJECT_VISUAL_STYLE_IDS.includes(style.visualStyle)) {
+      setVisualStyle(style.visualStyle);
+    }
+    if (style.voiceTone && TONES.includes(style.voiceTone)) setVoiceTone(style.voiceTone);
+
+    const settings = readDnaProjectDefaults(dna);
+    if (settings.videoFormat && isVideoFormat(settings.videoFormat)) {
+      setVideoFormat(normalizeVideoFormat(settings.videoFormat));
+    }
+    if (settings.cutPace) setCutPace(normalizeCutPace(settings.cutPace));
+    if (settings.scriptLanguage) {
+      setScriptLanguage(normalizeProjectScriptLanguage(settings.scriptLanguage));
+    }
+    if (
+      typeof settings.targetDurationSeconds === "number" &&
+      isValidProjectDuration(settings.targetDurationSeconds)
+    ) {
+      setTargetDurationSeconds(settings.targetDurationSeconds);
+    }
+
+    setApiModels((prev) => ({
+      ...prev,
+      ...(settings.llmModel ? { llmModel: settings.llmModel } : {}),
+      ...(settings.imageModel ? { imageModel: settings.imageModel } : {}),
+      ...(settings.videoModel ? { videoModel: settings.videoModel } : {}),
+      ...(settings.videoClipAudio
+        ? { videoClipAudio: settings.videoClipAudio as ProjectApiModels["videoClipAudio"] }
+        : {}),
+      ...(settings.ttsModel ? { ttsModel: settings.ttsModel } : {}),
+      ...(settings.ttsVoice ? { ttsVoice: settings.ttsVoice } : {}),
+    }));
+  }, []);
+
   React.useLayoutEffect(() => {
     const prefs = loadProjectFormPreferences();
+    let selectedDnaId = defaultDnaId;
     if (prefs) {
-      if (!defaultDnaId && prefs.projectDnaId) setProjectDnaId(prefs.projectDnaId);
+      if (!defaultDnaId && prefs.projectDnaId) {
+        setProjectDnaId(prefs.projectDnaId);
+        selectedDnaId = prefs.projectDnaId;
+      }
       if (prefs.genre && PROJECT_GENRE_IDS.includes(prefs.genre)) setGenre(prefs.genre);
       if (prefs.visualStyle && PROJECT_VISUAL_STYLE_IDS.includes(prefs.visualStyle))
         setVisualStyle(prefs.visualStyle);
@@ -319,6 +364,10 @@ export function NewProjectForm({
       }
       if (prefs.cutPace) setCutPace(normalizeCutPace(prefs.cutPace));
       if (prefs.scriptLanguage) setScriptLanguage(normalizeProjectScriptLanguage(prefs.scriptLanguage));
+      // Last-used API models act as the fallback when no DNA is selected.
+      if (prefs.apiModels) {
+        setApiModels((prev) => ({ ...prev, ...prefs.apiModels }));
+      }
       if (prefs.avatarIds?.length) {
         setAvatarCast({
           selectedIds: prefs.avatarIds,
@@ -328,8 +377,13 @@ export function NewProjectForm({
         setAvatarCast({ selectedIds: [prefs.avatarId], primaryId: prefs.avatarId });
       }
     }
+    // A selected DNA wins over the last-used fallback.
+    if (selectedDnaId) {
+      const dna = projectDna.find((d) => d.id === selectedDnaId);
+      if (dna) applyDnaDefaults(dna);
+    }
     setPrefsLoaded(true);
-  }, [defaultDnaId]);
+  }, [defaultDnaId, projectDna, applyDnaDefaults]);
 
   React.useEffect(() => {
     if (!prefsLoaded) return;
@@ -344,6 +398,7 @@ export function NewProjectForm({
       scriptLanguage,
       avatarIds: avatarCast.selectedIds,
       primaryAvatarId: avatarCast.primaryId,
+      apiModels,
     });
   }, [
     prefsLoaded,
@@ -356,6 +411,7 @@ export function NewProjectForm({
     cutPace,
     scriptLanguage,
     avatarCast,
+    apiModels,
   ]);
 
   function selectVideoFormat(format: VideoFormat) {
@@ -428,17 +484,23 @@ export function NewProjectForm({
 
   const hasSuggestions = aiIdeas.length > 0 || trendIdeas.length > 0;
 
+  function handleVisualStyleChange(next: string) {
+    setVisualStyle(next);
+    if (next === "Ultra Realistic" && apiModels.imageModel !== "black-forest-labs/flux.2-pro") {
+      setApiModels((prev) => ({ ...prev, imageModel: "black-forest-labs/flux.2-pro" }));
+      toast({
+        title: "Image model set to Flux 2 Pro",
+        description: "Best for photorealistic results — change it in API settings if needed.",
+      });
+    }
+  }
+
   function selectDna(id: string | null) {
     setProjectDnaId(id);
     if (!id) return;
     const dna = projectDna.find((d) => d.id === id);
     if (!dna) return;
-    const defaults = dnaStyleDefaultsForForms(dna);
-    if (defaults.genre && PROJECT_GENRE_IDS.includes(defaults.genre)) setGenre(defaults.genre);
-    if (defaults.visualStyle && PROJECT_VISUAL_STYLE_IDS.includes(defaults.visualStyle)) {
-      setVisualStyle(defaults.visualStyle);
-    }
-    if (defaults.voiceTone && TONES.includes(defaults.voiceTone)) setVoiceTone(defaults.voiceTone);
+    applyDnaDefaults(dna);
   }
 
   async function handleSubmit(e?: React.FormEvent | React.MouseEvent) {
@@ -459,6 +521,7 @@ export function NewProjectForm({
         body: JSON.stringify({
           title,
           projectDnaId,
+          scenarioId,
           storyDescription,
           genre,
           visualStyle,
@@ -487,88 +550,102 @@ export function NewProjectForm({
   }
 
   return (
-    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_min(26rem,34vw)]">
-      <div className="space-y-3 rounded-lg border border-border bg-background p-4">
-        <div className="grid grid-cols-1 gap-3">
+    <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_min(26rem,34vw)]">
+      <div className="space-y-2.5 rounded-lg border border-border bg-background p-3">
+        <div className="grid grid-cols-1 gap-2.5">
           <div>
             <Label>{PROJECT_IDENTITY_LABEL}</Label>
-            <p className="mb-1.5 text-2xs text-muted-foreground">{PROJECT_IDENTITY_HINT}</p>
+            <p className="mb-1 text-2xs text-muted-foreground">{PROJECT_IDENTITY_HINT}</p>
             <ProjectDnaPicker
               items={projectDna}
               value={projectDnaId}
               onChange={selectDna}
             />
           </div>
-          <div>
-            <Label htmlFor="title">{EPISODE_TITLE_LABEL}</Label>
-            <Input
-              id="title"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g. 5 at-home glute exercises"
-            />
+          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+            <div>
+              <Label htmlFor="title">{EPISODE_TITLE_LABEL}</Label>
+              <Input
+                id="title"
+                className="mt-1"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="e.g. 5 at-home glute exercises"
+              />
+            </div>
+            <div>
+              <Label htmlFor="desc">{EPISODE_STORY_LABEL}</Label>
+              <Textarea
+                id="desc"
+                value={storyDescription}
+                onChange={(e) => setStoryDescription(e.target.value)}
+                placeholder={EPISODE_STORY_HINT}
+                className="mt-1 min-h-[64px]"
+                rows={2}
+              />
+            </div>
           </div>
-          <div>
-            <Label htmlFor="desc">{EPISODE_STORY_LABEL}</Label>
-            <p className="mb-1.5 text-2xs text-muted-foreground">{EPISODE_STORY_HINT}</p>
-            <Textarea
-              id="desc"
-              value={storyDescription}
-              onChange={(e) => setStoryDescription(e.target.value)}
-              placeholder="Describe the script for this specific video…"
-              className="min-h-[120px]"
-            />
-          </div>
-          <div>
-            <Label>Video format</Label>
-            <p className="mb-2 text-2xs text-muted-foreground">
-              Choose horizontal for YouTube or vertical for Reels, Shorts and TikTok.
-            </p>
-            <VideoFormatPicker value={videoFormat} onChange={selectVideoFormat} />
-          </div>
-          <div>
-            <Label>Script language</Label>
-            <p className="mb-2 text-2xs text-muted-foreground">
-              Base language for AI-generated scripts and narration. English is the default.
-            </p>
-            <ProjectScriptLanguagePicker value={scriptLanguage} onChange={setScriptLanguage} />
+          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+            <div>
+              <Label>Video format</Label>
+              <div className="mt-1">
+                <VideoFormatPicker value={videoFormat} onChange={selectVideoFormat} compact />
+              </div>
+            </div>
+            <div>
+              <Label>Script language</Label>
+              <div className="mt-1">
+                <ProjectScriptLanguagePicker
+                  value={scriptLanguage}
+                  onChange={setScriptLanguage}
+                  compact
+                />
+              </div>
+            </div>
           </div>
           <div>
             <Label>Cut pace</Label>
-            <p className="mb-2 text-2xs text-muted-foreground">
-              How fast images change on the timeline — independent of narration length.
-            </p>
-            <CutPacePicker value={cutPace} onChange={setCutPace} />
+            <div className="mt-1">
+              <CutPacePicker value={cutPace} onChange={setCutPace} compact />
+            </div>
           </div>
           <div>
             <Label>Genre</Label>
-            <p className="mb-2 text-2xs text-muted-foreground">
-              Choose the narrative tone of the video.
-            </p>
-            <IconChipPicker
-              options={PROJECT_GENRES}
-              value={genre}
-              onChange={setGenre}
-              ariaLabel="Genre"
-            />
+            <div className="mt-1">
+              <IconChipPicker
+                options={PROJECT_GENRES}
+                value={genre}
+                onChange={setGenre}
+                ariaLabel="Genre"
+                compact
+              />
+            </div>
           </div>
           <div>
             <Label>Visual style</Label>
-            <p className="mb-2 text-2xs text-muted-foreground">
-              Defines the look of AI-generated scenes.
-            </p>
-            <IconChipPicker
-              options={PROJECT_VISUAL_STYLES}
-              value={visualStyle}
-              onChange={setVisualStyle}
-              ariaLabel="Visual style"
-            />
+            <div className="mt-1">
+              <IconChipPicker
+                options={PROJECT_VISUAL_STYLES}
+                value={visualStyle}
+                onChange={handleVisualStyleChange}
+                ariaLabel="Visual style"
+                compact
+              />
+            </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Label>Scenario / environment</Label>
+            <p className="mb-1 text-2xs text-muted-foreground">
+              Optional — reuse a real or AI location as the setting for every scene. Override per
+              scene later.
+            </p>
+            <ScenarioPicker items={scenarios} value={scenarioId} onChange={setScenarioId} />
+          </div>
+          <div className="grid grid-cols-2 gap-2.5">
             <div>
               <Label>Voice tone</Label>
               <Select value={voiceTone} onValueChange={setVoiceTone}>
-                <SelectTrigger>
+                <SelectTrigger className="mt-1">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -586,7 +663,7 @@ export function NewProjectForm({
                 value={String(targetDurationSeconds)}
                 onValueChange={(v) => setTargetDurationSeconds(Number(v))}
               >
-                <SelectTrigger>
+                <SelectTrigger className="mt-1">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -609,7 +686,7 @@ export function NewProjectForm({
                 Manage avatars
               </Link>
             </div>
-            <div className="mt-1.5">
+            <div className="mt-1">
               <AvatarCastPicker avatars={avatars} value={avatarCast} onChange={setAvatarCast} />
             </div>
           </div>

@@ -217,8 +217,7 @@ export async function generateAndSaveEditorialBlockImage(
     prompt,
     model: models.imageModel,
     aspectRatio: getAspectRatio(freshProject.videoFormat),
-    imageSize: "1K",
-    referenceImages: avatarRefs.length > 0 ? avatarRefs : undefined,
+    personReferenceImages: avatarRefs.length > 0 ? avatarRefs : undefined,
   });
 
   let url: string;
@@ -341,8 +340,7 @@ export async function generateAndSaveAnchor(
     prompt,
     model: models.imageModel,
     aspectRatio: getAspectRatio(project.videoFormat),
-    imageSize: "1K",
-    referenceImages: avatarRefs.length > 0 ? avatarRefs : undefined,
+    personReferenceImages: avatarRefs.length > 0 ? avatarRefs : undefined,
   });
 
   let url: string;

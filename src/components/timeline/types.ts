@@ -32,6 +32,12 @@ export function avatarSelectValue(block: Block): string {
   return "__inherit__";
 }
 
+export function scenarioSelectValue(block: Block): string {
+  if (block.scenarioId === "__none__") return "__none__";
+  if (block.scenarioId) return block.scenarioId;
+  return "__inherit__";
+}
+
 export interface TimelineState {
   selectedBlockId: string | null;
   playing: boolean;
