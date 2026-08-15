@@ -31,7 +31,8 @@ ENV NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL=$NEXT_PUBLIC_CLERK_SIGN_IN_F
 ENV NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL=$NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL
 ENV NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN mkdir -p /app/data \
+# Next may have no tracked /public; keep the path for COPY + generated assets.
+RUN mkdir -p /app/data /app/public \
   && DATABASE_URL=/app/data/app.db npx tsx src/lib/db/migrate.ts
 RUN npm run build
 
