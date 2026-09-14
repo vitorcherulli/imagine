@@ -1,17 +1,7 @@
 # ============================================================
 # Imagine V2 — Stack única para Portainer (copiar e colar)
+# Chaves preenchidas — NÃO commitar em repo público.
 # ------------------------------------------------------------
-# GOLDEN (melhor versão até 2026-06-28) — ver docker/GOLDEN_VERSION.md
-#   web:     taticweb/imagine-web@sha256:f1a8c3db4467db2abffab4da6b5cdd4739c4fbcb768ad4c3d237feb5151fabf9
-#   builder: taticweb/imagine-web-builder@sha256:b1c43762333eccfaaedb73905ce655d32e772b616ab941806b87b0cf6339b273
-# ------------------------------------------------------------
-# Defina as variáveis sensíveis no Portainer (Environment variables)
-# ou copie docker/.env.portainer.example → docker/.env.portainer (local, gitignored).
-#
-# Ao subir, o serviço migrator aplica drizzle/pg + hotfixes.
-# Se faltar coluna no Postgres: docker/pg-hotfix.sql ou force o migrator:
-#   docker service update --force <stack>_migrator
-#
 # Infra já existente no servidor:
 #   - PostgreSQL (hostname: postgres, DB: imagine)
 #   - S3 em https://s3.papo.global
@@ -22,46 +12,47 @@ version: "3.8"
 
 x-common-env: &common-env
   NODE_ENV: production
-  APP_HOST: ${APP_HOST:-imagine.papo.global}
-  NEXT_PUBLIC_APP_URL: https://${APP_HOST:-imagine.papo.global}
+  APP_HOST: imagine.papo.global
+  NEXT_PUBLIC_APP_URL: https://imagine.papo.global
 
   # PostgreSQL (já instalado no servidor)
-  DATABASE_URL: ${DATABASE_URL:-postgres://postgres:changeme@postgres:5432/imagine}
+  DATABASE_URL: postgres://postgres:changeme@postgres:5432/imagine
 
   # Clerk
-  CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
-  NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+  CLERK_SECRET_KEY: sk-or-v1-REDACTED_OPENROUTER_KEY_ALT
+  NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_REDACTED_CLERK_PUBLISHABLE
   NEXT_PUBLIC_CLERK_SIGN_IN_URL: /sign-in
   NEXT_PUBLIC_CLERK_SIGN_UP_URL: /sign-up
   NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL: /
   NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL: /
 
   # OpenRouter (modelos de produção)
-  OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
-  OPENROUTER_LLM_MODEL: ${OPENROUTER_LLM_MODEL:-anthropic/claude-opus-4.7}
-  OPENROUTER_IMAGE_MODEL: ${OPENROUTER_IMAGE_MODEL:-bytedance-seed/seedream-4.5}
-  OPENROUTER_VIDEO_MODEL: ${OPENROUTER_VIDEO_MODEL:-kwaivgi/kling-v3.0-pro}
-  OPENROUTER_TTS_MODEL: ${OPENROUTER_TTS_MODEL:-google/gemini-3.1-flash-tts-preview}
-  OPENROUTER_MUSIC_MODEL: ${OPENROUTER_MUSIC_MODEL:-google/lyria-3-pro-preview}
+  OPENROUTER_API_KEY: sk-or-v1-REDACTED_OPENROUTER_KEY
+  OPENROUTER_LLM_MODEL: anthropic/claude-opus-4.7
+  OPENROUTER_IMAGE_MODEL: bytedance-seed/seedream-4.5
+  OPENROUTER_VIDEO_MODEL: kwaivgi/kling-v3.0-pro
+  OPENROUTER_TTS_MODEL: google/gemini-3.1-flash-tts-preview
+  OPENROUTER_MUSIC_MODEL: google/lyria-3-pro-preview
 
   # S3 — https://s3.papo.global
-  S3_ENDPOINT: ${S3_ENDPOINT:-https://s3.papo.global}
+  S3_ENDPOINT: https://s3.papo.global
   S3_REGION: auto
-  S3_BUCKET: ${S3_BUCKET:-imagine}
-  S3_ACCESS_KEY: ${S3_ACCESS_KEY}
-  S3_SECRET_KEY: ${S3_SECRET_KEY}
-  S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
-  S3_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
+  S3_BUCKET: imagine
+  S3_ACCESS_KEY: REDACTED_S3_ACCESS
+  S3_SECRET_KEY: REDACTED_S3_SECRET
+  S3_ACCESS_KEY_ID: REDACTED_S3_ACCESS
+  S3_SECRET_ACCESS_KEY: REDACTED_S3_SECRET
   S3_FORCE_PATH_STYLE: "true"
-  S3_PUBLIC_URL: ${S3_PUBLIC_URL:-https://s3.papo.global}
+  S3_PUBLIC_URL: https://s3.papo.global
 
-  # Stock media (optional — image/video search in script & keyframe import)
-  PEXELS_API_KEY: ${PEXELS_API_KEY:-}
-  # Google Programmable Search — enable "Image search" on the engine
-  # https://programmablesearchengine.google.com/
-  GOOGLE_CUSTOM_SEARCH_API_KEY: ${GOOGLE_CUSTOM_SEARCH_API_KEY:-}
-  GOOGLE_CSE_ID: ${GOOGLE_CSE_ID:-}
-  SERPER_API_KEY: ${SERPER_API_KEY:-}
+  # Stock media (opcional — busca de imagens/vídeos)
+  PEXELS_API_KEY: ""
+  GOOGLE_CUSTOM_SEARCH_API_KEY: ""
+  GOOGLE_CSE_ID: YOUR_GOOGLE_CSE_ID
+  SERPER_API_KEY: ""
+
+  # ElevenLabs (opcional — vozes premium)
+  ELEVENLABS_API_KEY: ""
 
 services:
   migrator:
@@ -109,17 +100,14 @@ services:
       labels:
         - traefik.enable=true
         - traefik.docker.network=traefik_public
-        - traefik.http.routers.imagine-web.rule=Host(`${APP_HOST:-imagine.papo.global}`)
+        - traefik.http.routers.imagine-web.rule=Host(`imagine.papo.global`)
         - traefik.http.routers.imagine-web.entrypoints=websecure
         - traefik.http.routers.imagine-web.tls.certresolver=le
         - traefik.http.routers.imagine-web.service=imagine-web
         - traefik.http.services.imagine-web.loadbalancer.server.port=3000
-        - traefik.http.routers.imagine-web.middlewares=imagine-long-timeout@docker
-        - traefik.http.middlewares.imagine-long-timeout.buffering.maxResponseBodyBytes=0
-        - traefik.http.middlewares.imagine-long-timeout.buffering.maxRequestBodyBytes=0
-        - traefik.http.routers.imagine-web-http.rule=Host(`${APP_HOST:-imagine.papo.global}`)
+        - traefik.http.routers.imagine-web-http.rule=Host(`imagine.papo.global`)
         - traefik.http.routers.imagine-web-http.entrypoints=web
-        - traefik.http.routers.imagine-web-http.middlewares=imagine-https-redirect@docker
+        - traefik.http.routers.imagine-web-http.middlewares=imagine-https-redirect
         - traefik.http.middlewares.imagine-https-redirect.redirectscheme.scheme=https
         - traefik.http.middlewares.imagine-https-redirect.redirectscheme.permanent=true
 
