@@ -76,6 +76,8 @@ Default models (overridable via env):
 Requires Node 20+ and FFmpeg on PATH.
 
 ```bash
+cp .env.example .env.local
+# Fill Clerk + OPENROUTER_API_KEY (required)
 npm install
 npm run db:migrate
 npm run dev
@@ -83,29 +85,27 @@ npm run dev
 
 Opens at [http://localhost:3000](http://localhost:3000).
 
-Create a `.env.local` in the repo root with at least:
+Full variable list: [`.env.example`](.env.example). **Never commit** `.env.local`.
 
-```bash
-NEXT_PUBLIC_APP_URL=http://localhost:3000
-DATABASE_URL=./data/app.db
+Optional: ElevenLabs, Pexels, Serper/Tavily, Google CSE — see `.env.example`.
 
-NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=
-CLERK_SECRET_KEY=
-
-OPENROUTER_API_KEY=
-```
-
-Optional: `ELEVENLABS_API_KEY`, `PEXELS_API_KEY`, `SERPER_API_KEY`, `GOOGLE_CUSTOM_SEARCH_API_KEY` + `GOOGLE_CSE_ID` (image/video search and research).
+> **Cost warning:** LLM, image, video, and TTS calls are billed to **your** OpenRouter (and other) API accounts.
 
 ## Docker / Portainer
 
 Swarm + Traefik stacks live in [`docker/`](docker/README.md).
 
-For production, use **`docker/docker-compose.portainer.stack.yml`**.
+For production, use **`docker/docker-compose.portainer.stack.yml`** and set secrets in Portainer (or copy `docker/.env.portainer.example` → `docker/.env.portainer`, gitignored).
 
 There are also MinIO and Postgres stacks if the server does not already have storage and a database.
 
-**Storage:** the app still writes media to `public/generated/` (disk). `S3_*` variables are already in the stacks; the app integration is not finished yet.
+**Storage:** media can live on disk under `public/generated/` and/or S3 when `S3_*` is configured.
+
+## License & contributing
+
+- License: [MIT](LICENSE)
+- Contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Security: [SECURITY.md](SECURITY.md)
 
 ## Layout
 

@@ -1,39 +1,35 @@
 # Imagine — Portainer
 
-## Arquivo para copiar e colar
+## Stack to paste
 
-**Use só este:**
+Use:
 
 `docker/docker-compose.portainer.stack.yml`
 
-Cole inteiro no Portainer → Stacks → Add stack → Web editor.
+Portainer → Stacks → Add stack → Web editor. Set **environment variables** from
+[`docker/.env.portainer.example`](.env.portainer.example) (never commit real keys).
 
-## Pré-requisitos no servidor
+## Server prerequisites
 
-1. Rede Docker `traefik_public` (Traefik)
-2. PostgreSQL acessível como `postgres:5432`, database `imagine`
-3. DNS `imagine.papo.global` → servidor
-4. Registry no Portainer: `taticweb/imagine-web:latest` e `taticweb/imagine-web-builder:latest`
+1. Docker network `traefik_public` (Traefik)
+2. PostgreSQL reachable as `postgres:5432`, database `imagine`
+3. DNS for your `APP_HOST` → server
+4. Images available to Portainer, e.g. `your-registry/imagine-web:latest` and `imagine-web-builder:latest`
 
-## Imagens (Docker Hub)
+Default compose files reference `taticweb/imagine-web` / `taticweb/imagine-web-builder` — change the image names if you publish under another registry.
 
-| Imagem | Tag |
-|--------|-----|
-| `taticweb/imagine-web` | `latest` |
-| `taticweb/imagine-web-builder` | `latest` |
+## AI models (defaults)
 
-Sim — **`latest` = última versão publicada**. Para fixar versão, troque `:latest` por `:1.0.0` etc.
-
-## Modelos de IA (produção)
-
-| Uso | Modelo |
+| Use | Model |
 |-----|--------|
-| Roteiro / metadados | `anthropic/claude-opus-4.7` |
-| Imagens / thumbnail | `bytedance-seed/seedream-4.5` |
-| Vídeo | `kwaivgi/kling-v3.0-pro` |
-| Narração | `google/gemini-3.1-flash-tts-preview` |
-| Música | `google/lyria-3-pro-preview` |
+| Script / metadata | `anthropic/claude-opus-4.7` |
+| Images / thumbnail | `bytedance-seed/seedream-4.5` |
+| Video | `kwaivgi/kling-v3.0-pro` |
+| Narration | `google/gemini-3.1-flash-tts-preview` |
+| Music | `google/lyria-3-pro-preview` |
 
-## Outros arquivos em `docker/`
+Override with `OPENROUTER_*_MODEL` env vars.
 
-Stacks separadas (postgres, minio) — **não use** se Postgres e S3 já existem no servidor.
+## Other files in `docker/`
+
+Separate Postgres / MinIO stacks — skip them if you already have DB and S3.

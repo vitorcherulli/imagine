@@ -12,7 +12,7 @@
 #
 # Infra já existente no servidor:
 #   - PostgreSQL (hostname: postgres, DB: imagine)
-#   - S3 em https://s3.papo.global
+#   - S3 (configure S3_ENDPOINT / S3_PUBLIC_URL)
 #   - Traefik na rede traefik_public
 # ============================================================
 
@@ -20,8 +20,8 @@ version: "3.8"
 
 x-common-env: &common-env
   NODE_ENV: production
-  APP_HOST: ${APP_HOST:-imagine.papo.global}
-  NEXT_PUBLIC_APP_URL: https://${APP_HOST:-imagine.papo.global}
+  APP_HOST: ${APP_HOST:-app.example.com}
+  NEXT_PUBLIC_APP_URL: https://${APP_HOST:-app.example.com}
 
   # PostgreSQL (já instalado no servidor)
   DATABASE_URL: ${DATABASE_URL}
@@ -42,8 +42,8 @@ x-common-env: &common-env
   OPENROUTER_TTS_MODEL: ${OPENROUTER_TTS_MODEL:-google/gemini-3.1-flash-tts-preview}
   OPENROUTER_MUSIC_MODEL: ${OPENROUTER_MUSIC_MODEL:-google/lyria-3-pro-preview}
 
-  # S3 — https://s3.papo.global
-  S3_ENDPOINT: ${S3_ENDPOINT:-https://s3.papo.global}
+  # S3
+  S3_ENDPOINT: ${S3_ENDPOINT:-https://s3.example.com}
   S3_REGION: auto
   S3_BUCKET: ${S3_BUCKET:-imagine}
   S3_ACCESS_KEY: ${S3_ACCESS_KEY}
@@ -51,7 +51,7 @@ x-common-env: &common-env
   S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
   S3_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
   S3_FORCE_PATH_STYLE: "true"
-  S3_PUBLIC_URL: ${S3_PUBLIC_URL:-https://s3.papo.global}
+  S3_PUBLIC_URL: ${S3_PUBLIC_URL:-https://s3.example.com}
 
   # Stock media (opcional)
   PEXELS_API_KEY: ${PEXELS_API_KEY:-}
@@ -108,12 +108,12 @@ services:
       labels:
         - traefik.enable=true
         - traefik.docker.network=traefik_public
-        - traefik.http.routers.imagine-web.rule=Host(`${APP_HOST:-imagine.papo.global}`)
+        - traefik.http.routers.imagine-web.rule=Host(`${APP_HOST:-app.example.com}`)
         - traefik.http.routers.imagine-web.entrypoints=websecure
         - traefik.http.routers.imagine-web.tls.certresolver=le
         - traefik.http.routers.imagine-web.service=imagine-web
         - traefik.http.services.imagine-web.loadbalancer.server.port=3000
-        - traefik.http.routers.imagine-web-http.rule=Host(`${APP_HOST:-imagine.papo.global}`)
+        - traefik.http.routers.imagine-web-http.rule=Host(`${APP_HOST:-app.example.com}`)
         - traefik.http.routers.imagine-web-http.entrypoints=web
         - traefik.http.routers.imagine-web-http.middlewares=imagine-https-redirect
         - traefik.http.middlewares.imagine-https-redirect.redirectscheme.scheme=https

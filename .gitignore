@@ -19,3 +19,7 @@ public/generated
 .vscode
 .idea
 tsconfig.tsbuildinfo
+
+.cursor/
+**/__pycache__/
+*.pyc
