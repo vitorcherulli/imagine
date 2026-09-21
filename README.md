@@ -1,79 +1,79 @@
 # Imagine
 
-App web para criar vídeos com IA: da ideia ao roteiro, da timeline ao export.
+An AI video studio: from idea to script, from timeline to export.
 
-Você descreve a história, o Imagine gera (ou ajuda a escrever) a narração, busca e cria imagens e clips, monta tudo numa timeline horizontal no estilo Premiere e exporta o vídeo final — com metadados para YouTube e pack para Premiere, se quiser.
+Describe a story and Imagine helps write the narration, find or generate images and clips, assemble them on a Premiere-style horizontal timeline, and export the finished video — plus YouTube metadata and a Premiere pack if you want them.
 
-## A cara do produto
+## Product screenshots
 
-### Biblioteca de projetos
+### Project library
 
-Pastas, capas, status e atalhos para **New video**, **New publication** e dublagem. O trabalho recente fica à frente.
+Folders, covers, status, and shortcuts for **New video**, **New publication**, and dubbing. Recent work stays up front.
 
-![Biblioteca de projetos — cards, pastas e atalhos para novo vídeo](docs/screenshots/01-projetos.jpg)
+![Project library — cards, folders, and shortcuts for a new video](docs/screenshots/01-projetos.jpg)
 
 ### Script Studio
 
-Editor do roteiro: ênfase na fala, TTS, pronúncia, pausas de música e fotos de referência. Quando o texto está pronto, aplica na timeline.
+Script editor with speech emphasis, TTS, pronunciation, music pauses, and reference photos. When the text is ready, apply it to the timeline.
 
-![Script Studio — documento de roteiro com ferramentas de narração e ênfase](docs/screenshots/02-script-studio.jpg)
+![Script Studio — script document with narration and emphasis tools](docs/screenshots/02-script-studio.jpg)
 
 ### Timeline
 
-Trilhas de vídeo, keyframe, cena, narração, música e texto, com preview vertical (Reels / 9:16) à direita.
+Tracks for video, keyframes, scene audio, narration, music, and text, with a vertical Reels / 9:16 preview on the right.
 
-![Timeline estilo Premiere — blocos visuais, narração e preview 9:16](docs/screenshots/03-timeline.jpg)
+![Premiere-style timeline — visual blocks, narration, and 9:16 preview](docs/screenshots/03-timeline.jpg)
 
-## O que o Imagine faz
+## What Imagine does
 
-- **Vídeos de história** — brief (gênero, estilo, tom, duração, formato 9:16 / 16:9) e geração assistida por IA
-- **Script Studio** — roteiro em parágrafos, ênfase, pronúncia, momentos de música, fotos e vídeos de referência
-- **Timeline** — arrastar, reordenar, scrub; trilhas de vídeo, keyframe, áudio de cena, narração e música
-- **Mídia** — keyframes e clips gerados por IA, ou importados (stock / busca)
-- **Narração TTS** — várias vozes e modelos; entrega e ênfase por trecho
-- **Project DNA, Avatars e Scenarios** — identidade visual, personagens e cenários reutilizáveis
-- **Dublagem** — transcrever, traduzir e re-vozear MP4/MP3
-- **Publicações** — carrosséis / slides para redes
-- **YouTube** — thumbnail, títulos, descrição e tags
-- **Export** — MP4 final (FFmpeg) ou ZIP se o encode falhar; pack para Premiere
+- **Story videos** — brief (genre, style, tone, duration, 9:16 / 16:9) with AI-assisted generation
+- **Script Studio** — paragraph script, emphasis, pronunciation, music moments, reference photos and videos
+- **Timeline** — drag, reorder, scrub; tracks for video, keyframes, scene audio, narration, and music
+- **Media** — AI-generated keyframes and clips, or imported stock / search
+- **TTS narration** — multiple voices and models; delivery and emphasis per beat
+- **Project DNA, Avatars, and Scenarios** — reusable visual identity, characters, and locations
+- **Dubbing** — transcribe, translate, and re-voice MP4/MP3
+- **Publications** — carousels / slides for social
+- **YouTube** — thumbnail, titles, description, and tags
+- **Export** — final MP4 (FFmpeg) or ZIP if encoding fails; Premiere pack
 
-## Fluxo típico
+## Typical flow
 
-1. **Novo projeto** — ideia, formato, elenco e estilo
-2. **Roteiro** — escrever ou gerar no Script Studio
-3. **Pronúncia e pausas** — ajustar fala e respiros musicais
-4. **Mídia** — keyframes, stock e/ou vídeo gerado por bloco
-5. **Narração** — TTS por parágrafo
-6. **Aplicar na timeline** — montar, reordenar, preview
-7. **YouTube** — thumbnail e metadados
-8. **Export** — MP4 ou pack Premiere
+1. **New project** — idea, format, cast, and style
+2. **Script** — write or generate in Script Studio
+3. **Pronunciation and pauses** — lock speech and music breaths
+4. **Media** — keyframes, stock, and/or generated video per block
+5. **Narration** — TTS per paragraph
+6. **Apply to timeline** — assemble, reorder, preview
+7. **YouTube** — thumbnail and metadata
+8. **Export** — MP4 or Premiere pack
 
 ## Stack
 
-| Camada | Tecnologia |
-|--------|------------|
+| Layer | Tech |
+|--------|------|
 | App | Next.js 14 (App Router) + TypeScript |
 | UI | Tailwind CSS + Radix |
 | Auth | Clerk |
-| Dados | Drizzle ORM — SQLite em dev, Postgres em produção |
-| IA | OpenRouter (LLM, imagem, vídeo, TTS, música) |
-| TTS extra | ElevenLabs (opcional) |
-| Export | FFmpeg (`fluent-ffmpeg`), ZIP de fallback |
-| Storage | disco em `public/generated/` (S3 previsto nos stacks) |
+| Data | Drizzle ORM — SQLite in dev, Postgres in production |
+| AI | OpenRouter (LLM, image, video, TTS, music) |
+| Extra TTS | ElevenLabs (optional) |
+| Export | FFmpeg (`fluent-ffmpeg`), ZIP fallback |
+| Storage | disk under `public/generated/` (S3 wired in the stacks, not fully in app code yet) |
 
-Modelos padrão (configuráveis por env):
+Default models (overridable via env):
 
-| Uso | Modelo |
+| Use | Model |
 |-----|--------|
-| Roteiro / metadados | `anthropic/claude-opus-4.7` |
-| Imagens / thumbnail | `bytedance-seed/seedream-4.5` |
-| Vídeo | `kwaivgi/kling-v3.0-pro` |
-| Narração | `google/gemini-3.1-flash-tts-preview` |
-| Música | `google/lyria-3-pro-preview` |
+| Script / metadata | `anthropic/claude-opus-4.7` |
+| Images / thumbnail | `bytedance-seed/seedream-4.5` |
+| Video | `kwaivgi/kling-v3.0-pro` |
+| Narration | `google/gemini-3.1-flash-tts-preview` |
+| Music | `google/lyria-3-pro-preview` |
 
-## Como rodar localmente
+## Local setup
 
-Pré-requisitos: Node 20+, FFmpeg no PATH.
+Requires Node 20+ and FFmpeg on PATH.
 
 ```bash
 npm install
@@ -81,9 +81,9 @@ npm run db:migrate
 npm run dev
 ```
 
-Abre em [http://localhost:3000](http://localhost:3000).
+Opens at [http://localhost:3000](http://localhost:3000).
 
-Crie um `.env.local` na raiz com pelo menos:
+Create a `.env.local` in the repo root with at least:
 
 ```bash
 NEXT_PUBLIC_APP_URL=http://localhost:3000
@@ -95,35 +95,35 @@ CLERK_SECRET_KEY=
 OPENROUTER_API_KEY=
 ```
 
-Opcionais: `ELEVENLABS_API_KEY`, `PEXELS_API_KEY`, `SERPER_API_KEY`, `GOOGLE_CUSTOM_SEARCH_API_KEY` + `GOOGLE_CSE_ID` (busca de imagens/vídeos e pesquisa).
+Optional: `ELEVENLABS_API_KEY`, `PEXELS_API_KEY`, `SERPER_API_KEY`, `GOOGLE_CUSTOM_SEARCH_API_KEY` + `GOOGLE_CSE_ID` (image/video search and research).
 
 ## Docker / Portainer
 
-Stacks Swarm + Traefik em [`docker/`](docker/README.md).
+Swarm + Traefik stacks live in [`docker/`](docker/README.md).
 
-Na produção, use **`docker/docker-compose.portainer.stack.yml`**.
+For production, use **`docker/docker-compose.portainer.stack.yml`**.
 
-Há também stacks de MinIO e Postgres para quem ainda não tem storage/banco no servidor.
+There are also MinIO and Postgres stacks if the server does not already have storage and a database.
 
-**Storage:** o app ainda grava mídia em `public/generated/` (disco). As variáveis `S3_*` já estão nos stacks; a integração no código ainda não está completa.
+**Storage:** the app still writes media to `public/generated/` (disk). `S3_*` variables are already in the stacks; the app integration is not finished yet.
 
-## Estrutura
+## Layout
 
 ```
 imagine/
 ├── src/
-│   ├── app/             # rotas Next.js (projetos, script, gallery, DNA, dubs…)
+│   ├── app/             # Next.js routes (projects, script, gallery, DNA, dubs…)
 │   ├── components/      # UI, Script Studio, Timeline
 │   ├── lib/
 │   │   ├── db/          # Drizzle (SQLite / Postgres)
-│   │   └── openrouter/  # clientes de IA
+│   │   └── openrouter/  # AI clients
 │   └── middleware.ts    # Clerk
-├── docs/screenshots/    # imagens deste README
+├── docs/screenshots/    # images for this README
 ├── docker/              # compose / Portainer
 ├── drizzle/             # migrations
-├── editor-ia/           # experimento à parte (Premiere + IA)
-├── public/generated/    # mídia local (gitignored)
+├── editor-ia/           # separate experiment (Premiere + AI)
+├── public/generated/    # local media (gitignored)
 └── data/                # SQLite (gitignored)
 ```
 
-`editor-ia/` não faz parte do fluxo do app web — ver [`editor-ia/README.md`](editor-ia/README.md).
+`editor-ia/` is not part of the web app flow — see [`editor-ia/README.md`](editor-ia/README.md).
