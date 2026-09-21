@@ -1,5 +1,7 @@
 # Imagine
 
+A project conceived by [Vitor Cherulli](https://github.com/vitorcherulli).
+
 An AI video studio: from idea to script, from timeline to export.
 
 Describe a story and Imagine helps write the narration, find or generate images and clips, assemble them on a Premiere-style horizontal timeline, and export the finished video — plus YouTube metadata and a Premiere pack if you want them.
