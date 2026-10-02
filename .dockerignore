@@ -10,6 +10,8 @@ dist
 
 data
 public/generated
+criativos
+.cursor
 *.db
 *.db-journal
 
