@@ -33,6 +33,35 @@ const PROBE_CONCURRENCY = 6;
 const AI_BATCH = 10;
 const AI_PREF_KEY = "creatives.import.ai";
 const FRAME_MAX = 512;
+/** Files up to this size are copied into memory when picked (see {@link snapshotFile}). */
+const SNAPSHOT_MAX_BYTES = 64 * 1024 * 1024;
+
+/**
+ * Chrome aborts an upload with "Failed to fetch" (net::ERR_UPLOAD_FILE_CHANGED) when the file
+ * changed on disk after it was picked — Google Drive streaming files change on first read.
+ * An in-memory copy taken at pick time makes preview, AI analysis and upload independent of disk.
+ */
+async function snapshotFile(file: File): Promise<File> {
+  if (file.size > SNAPSHOT_MAX_BYTES) return file;
+  try {
+    return new File([await file.arrayBuffer()], file.name, {
+      type: file.type,
+      lastModified: file.lastModified,
+    });
+  } catch {
+    return file;
+  }
+}
+
+function uploadErrorMessage(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  const unreadable =
+    (err instanceof TypeError && /failed to fetch|network/i.test(message)) ||
+    (err instanceof DOMException && err.name === "NotReadableError");
+  return unreadable
+    ? "Could not read the file — it changed after you picked it (common with Google Drive). Copy it to a local folder or remove and add it again."
+    : message;
+}
 
 /** Files and folders from a drop event. Must be called synchronously inside the event handler. */
 export function collectDropped(dt: DataTransfer): Promise<DroppedFile[]> {
@@ -220,8 +249,9 @@ export function BulkImportDialog({
       if (!supported.length) return;
       setReading(true);
       const probed = await mapLimit(supported, PROBE_CONCURRENCY, async (d) => {
-        const size = await readLocalMediaSize(d.file);
-        return { ...d, size, key: `r${++keySeq}` };
+        const file = await snapshotFile(d.file);
+        const size = await readLocalMediaSize(file);
+        return { ...d, file, size, key: `r${++keySeq}` };
       });
 
       const current = rowsRef.current;
@@ -504,7 +534,7 @@ export function BulkImportDialog({
         update(r.key, { status: "done" });
       } catch (err) {
         failed += 1;
-        update(r.key, { status: "error", error: err instanceof Error ? err.message : String(err) });
+        update(r.key, { status: "error", error: uploadErrorMessage(err) });
       }
     });
     setImporting(false);
