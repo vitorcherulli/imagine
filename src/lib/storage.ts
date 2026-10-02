@@ -310,7 +310,9 @@ export async function readImageAsDataUrl(publicUrl: string): Promise<string> {
     buf = await fs.readFile(localAbsoluteFromPublicUrl(publicUrl));
   }
 
-  const ext = path.extname(pathOnly).slice(1).toLowerCase();
+  // Providers (e.g. Anthropic) reject a data URL whose media type disagrees with the bytes,
+  // and some files are stored under the wrong extension (JPEG saved as `.png`).
+  const ext = (detectImageExt(buf) ?? path.extname(pathOnly)).replace(/^\./, "").toLowerCase();
   const mime =
     ext === "jpg" || ext === "jpeg"
       ? "image/jpeg"

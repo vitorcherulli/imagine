@@ -1,5 +1,5 @@
 import { createId } from "@paralleldrive/cuid2";
-import { and, asc, eq, inArray, lt } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lt } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import type { ImageChat, ImageChatMessage } from "@/lib/db/schema";
 import { OPENROUTER_MODELS } from "@/lib/openrouter/client";
@@ -46,7 +46,12 @@ export async function listImageChatMessages(chatId: string): Promise<ImageChatMe
     .select()
     .from(schema.imageChatMessages)
     .where(eq(schema.imageChatMessages.chatId, chatId))
-    .orderBy(asc(schema.imageChatMessages.createdAt), asc(schema.imageChatMessages.id));
+    .orderBy(
+      asc(schema.imageChatMessages.createdAt),
+      // On a same-second tie the user prompt must precede its reply ("user" > "assistant").
+      desc(schema.imageChatMessages.role),
+      asc(schema.imageChatMessages.id),
+    );
 }
 
 export function allChatImageUrls(messages: ImageChatMessage[]): Set<string> {
@@ -225,8 +230,9 @@ export async function sendImageChatMessage(input: {
       userId: input.chat.userId,
       role: "assistant",
       status: "thinking",
-      createdAt: new Date(now + 1),
-      updatedAt: new Date(now + 1),
+      // SQLite timestamps have 1s resolution — a smaller offset ties with the user message.
+      createdAt: new Date(now + 1000),
+      updatedAt: new Date(now + 1000),
     },
   ]);
   await db
