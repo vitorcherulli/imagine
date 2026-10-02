@@ -23,6 +23,10 @@ export interface ImageGenInput {
   personReferenceImages?: string[];
   /** Put reference images before the text prompt (helps some image models lock identity). */
   referenceImagesFirst?: boolean;
+  /** Raw resolution from the model catalog; `null` omits it for models without that parameter. */
+  resolution?: string | null;
+  /** Catalog models are all served by POST /images, even ones the built-in heuristics don't know. */
+  forceDedicatedApi?: boolean;
 }
 
 export interface ImageGenResult {
@@ -211,7 +215,8 @@ async function generateImageViaDedicatedApi(
     prompt: input.prompt,
   };
   if (input.aspectRatio) body.aspect_ratio = input.aspectRatio;
-  body.resolution = imageSize;
+  if (input.resolution === undefined) body.resolution = imageSize;
+  else if (input.resolution) body.resolution = input.resolution;
   if (refs?.length) {
     body.input_references = refs.map((url) => ({
       type: "image_url",
@@ -354,7 +359,7 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenResul
 
   const hadReferences = Boolean(referenceImages?.length);
 
-  if (imageModelUsesDedicatedImagesApi(model)) {
+  if (input.forceDedicatedApi || imageModelUsesDedicatedImagesApi(model)) {
     try {
       return await generateImageViaDedicatedApi(input, referenceImages);
     } catch (err) {

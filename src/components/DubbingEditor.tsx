@@ -19,6 +19,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { AddToCreativesButton } from "@/components/creatives/AddToCreatives";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -1212,11 +1213,11 @@ function RendersPanel({
       {renders.length > 0 ? (
         <div className="mt-3 space-y-1.5 border-t border-border/60 pt-2">
           {renders.slice(0, 5).map((r) => (
+            <div key={r.id} className="flex items-center gap-1.5">
             <a
-              key={r.id}
               href={r.url}
               download
-              className="flex items-center justify-between rounded border border-border/60 bg-background/40 px-2 py-1 text-xs hover:bg-background"
+              className="flex flex-1 items-center justify-between rounded border border-border/60 bg-background/40 px-2 py-1 text-xs hover:bg-background"
             >
               <span className="flex items-center gap-2">
                 {r.kind === "video" ? (
@@ -1236,6 +1237,14 @@ function RendersPanel({
               </span>
               <Download className="h-3 w-3" />
             </a>
+            {r.kind === "video" ? (
+              <AddToCreativesButton
+                iconOnly
+                language={r.targetLanguage?.slice(0, 2).toUpperCase()}
+                source={{ type: "dubbing", id: r.id, isVideo: true }}
+              />
+            ) : null}
+            </div>
           ))}
         </div>
       ) : null}

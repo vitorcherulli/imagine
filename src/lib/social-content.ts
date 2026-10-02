@@ -9,6 +9,12 @@ export type PostKind =
   | "list"
   | "quote"
   | "promo"
+  | "product_feature"
+  | "problem_solution"
+  | "before_after"
+  | "testimonial"
+  | "comparison"
+  | "offer"
   | "story"
   | "mixed";
 
@@ -34,6 +40,36 @@ export const POST_KINDS: Array<{ id: PostKind; label: string; hint: string }> = 
     hint: "Offer, launch, or call to action.",
   },
   {
+    id: "product_feature",
+    label: "Product / feature",
+    hint: "Showcase a product or software feature and the outcome it delivers.",
+  },
+  {
+    id: "problem_solution",
+    label: "Problem → solution",
+    hint: "Name the pain, agitate it, then present your product as the fix.",
+  },
+  {
+    id: "before_after",
+    label: "Before / after",
+    hint: "Contrast life or workflow before and after using the product.",
+  },
+  {
+    id: "testimonial",
+    label: "Testimonial / social proof",
+    hint: "Customer result, review, or case study with concrete numbers.",
+  },
+  {
+    id: "comparison",
+    label: "Comparison",
+    hint: "Your product vs. the old way or competitors — clear winner.",
+  },
+  {
+    id: "offer",
+    label: "Offer / discount",
+    hint: "Limited-time deal, free trial, or coupon with urgency and a strong CTA.",
+  },
+  {
     id: "story",
     label: "Storytelling",
     hint: "Mini narrative arc — optional character.",
@@ -44,6 +80,8 @@ export const POST_KINDS: Array<{ id: PostKind; label: string; hint: string }> = 
     hint: "Let the AI pick the best structure.",
   },
 ];
+
+export const POST_KIND_IDS = POST_KINDS.map((k) => k.id) as [PostKind, ...PostKind[]];
 
 export const POST_FORMATS: Array<{ id: PostFormat; label: string; hint: string }> = [
   { id: "carousel", label: "Carousel", hint: "Multiple slides (3–10)." },
@@ -75,6 +113,11 @@ export function normalizePostFormat(value: unknown): PostFormat {
 export function normalizePostKind(value: unknown): PostKind {
   const valid = POST_KINDS.map((k) => k.id);
   return valid.includes(value as PostKind) ? (value as PostKind) : "educational";
+}
+
+export function postKindPromptHint(value: unknown): string {
+  const kind = normalizePostKind(value);
+  return POST_KINDS.find((k) => k.id === kind)?.hint ?? "";
 }
 
 export function defaultSlideCount(postFormat: PostFormat): number {

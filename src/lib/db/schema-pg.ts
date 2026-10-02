@@ -28,6 +28,9 @@ export const projects = pgTable("projects", {
   postKind: text("post_kind").notNull().default("educational"),
   slideCount: integer("slide_count").notNull().default(7),
   socialUseAvatar: boolean("social_use_avatar").notNull().default(false),
+  socialArt: text("social_art"),
+  socialReferences: text("social_references"),
+  socialReferenceNotes: text("social_reference_notes"),
   videoFormat: text("video_format").notNull().default("horizontal"),
   cutPace: text("cut_pace").notNull().default("balanced"),
   narrationMode: text("narration_mode").notNull().default("continuous"),
@@ -188,6 +191,114 @@ export const scenarios = pgTable("scenarios", {
   updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
 });
 
+export const variationSets = pgTable("variation_sets", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  name: text("name").notNull(),
+  sourceImageUrl: text("source_image_url").notNull(),
+  instructions: text("instructions"),
+  aspectRatio: text("aspect_ratio").notNull().default("1:1"),
+  imageModel: text("image_model"),
+  videoModel: text("video_model"),
+  textMode: text("text_mode").notNull().default("keep"),
+  customText: text("custom_text"),
+  createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
+});
+
+export const variationItems = pgTable("variation_items", {
+  id: text("id").primaryKey(),
+  setId: text("set_id")
+    .notNull()
+    .references(() => variationSets.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull(),
+  direction: text("direction"),
+  imageUrl: text("image_url"),
+  status: text("status").notNull().default("generating"),
+  error: text("error"),
+  videoUrl: text("video_url"),
+  videoStatus: text("video_status"),
+  videoError: text("video_error"),
+  imageModel: text("image_model"),
+  videoModel: text("video_model"),
+  headline: text("headline"),
+  createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
+});
+
+export const creatives = pgTable("creatives", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  code: integer("code").notNull(),
+  version: integer("version").notNull().default(1),
+  product: text("product").notNull(),
+  angle: text("angle").notNull(),
+  hook: text("hook").notNull().default(""),
+  format: text("format").notNull(),
+  creator: text("creator").notNull().default(""),
+  aspectRatio: text("aspect_ratio").notNull(),
+  language: text("language").notNull().default("PT"),
+  kind: text("kind").notNull().default("image"),
+  fileUrl: text("file_url").notNull(),
+  thumbUrl: text("thumb_url"),
+  mimeType: text("mime_type").notNull(),
+  width: integer("width"),
+  height: integer("height"),
+  durationSeconds: real("duration_seconds"),
+  sizeBytes: integer("size_bytes").notNull().default(0),
+  originalName: text("original_name").notNull().default(""),
+  source: text("source").notNull().default("upload"),
+  sourceRef: text("source_ref"),
+  status: text("status"),
+  notes: text("notes").notNull().default(""),
+  createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
+});
+
+export const creativeMetrics = pgTable("creative_metrics", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  adName: text("ad_name").notNull(),
+  code: integer("code"),
+  spend: real("spend").notNull().default(0),
+  impressions: integer("impressions").notNull().default(0),
+  clicks: integer("clicks").notNull().default(0),
+  results: real("results").notNull().default(0),
+  sourceFile: text("source_file").notNull().default(""),
+  importId: text("import_id"),
+  importedAt: timestamp("imported_at", { mode: "date" }).notNull().defaultNow(),
+});
+
+export const creativeMetricImports = pgTable("creative_metric_imports", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  sourceFile: text("source_file").notNull().default(""),
+  periodStart: text("period_start"),
+  periodEnd: text("period_end"),
+  rows: integer("rows").notNull().default(0),
+  matched: integer("matched").notNull().default(0),
+  importedAt: timestamp("imported_at", { mode: "date" }).notNull().defaultNow(),
+});
+
+export const creativeShares = pgTable("creative_shares", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  token: text("token").notNull(),
+  scope: text("scope").notNull(),
+  scopeValue: text("scope_value").notNull().default(""),
+  expiresAt: timestamp("expires_at", { mode: "date" }),
+  views: integer("views").notNull().default(0),
+  lastViewedAt: timestamp("last_viewed_at", { mode: "date" }),
+  createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+});
+
+export const creativeFolders = pgTable("creative_folders", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  name: text("name").notNull(),
+  createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+});
+
 export const storyBlocks = pgTable("story_blocks", {
   id: text("id").primaryKey(),
   projectId: text("project_id")
@@ -241,6 +352,7 @@ export const socialSlides = pgTable("social_slides", {
   visualPrompt: text("visual_prompt").notNull().default(""),
   imageUrl: text("image_url"),
   referenceAssetId: text("reference_asset_id"),
+  art: text("art"),
   status: text("status").notNull().default("draft"),
   avatarId: text("avatar_id"),
   errorMessage: text("error_message"),
@@ -265,6 +377,30 @@ export const socialMetadata = pgTable(
   },
   (table) => ({
     projectIdUnique: uniqueIndex("social_metadata_project_id_unique").on(table.projectId),
+  }),
+);
+
+export const socialArtBrandKits = pgTable(
+  "social_art_brand_kits",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull(),
+    projectDnaId: text("project_dna_id")
+      .notNull()
+      .references(() => projectDna.id, { onDelete: "cascade" }),
+    handle: text("handle").notNull().default(""),
+    colors: text("colors").notNull().default("{}"),
+    accentShine: boolean("accent_shine").notNull().default(true),
+    fontHeading: text("font_heading").notNull().default("Montserrat"),
+    fontBody: text("font_body").notNull().default("Montserrat"),
+    uppercaseTitles: boolean("uppercase_titles").notNull().default(true),
+    decorColor: text("decor_color").notNull().default("#f59e0b"),
+    decorDefault: boolean("decor_default").notNull().default(false),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
+  },
+  (table) => ({
+    projectDnaIdUnique: uniqueIndex("social_art_brand_kits_project_dna_id_unique").on(table.projectDnaId),
   }),
 );
 
@@ -416,6 +552,8 @@ export type SocialSlide = typeof socialSlides.$inferSelect;
 export type NewSocialSlide = typeof socialSlides.$inferInsert;
 export type SocialMetadata = typeof socialMetadata.$inferSelect;
 export type NewSocialMetadata = typeof socialMetadata.$inferInsert;
+export type SocialArtBrandKit = typeof socialArtBrandKits.$inferSelect;
+export type NewSocialArtBrandKit = typeof socialArtBrandKits.$inferInsert;
 export type YoutubeMetadata = typeof youtubeMetadata.$inferSelect;
 export type Export = typeof exports.$inferSelect;
 export type ProjectDna = typeof projectDna.$inferSelect;
@@ -424,6 +562,8 @@ export type Avatar = typeof avatars.$inferSelect;
 export type NewAvatar = typeof avatars.$inferInsert;
 export type Scenario = typeof scenarios.$inferSelect;
 export type NewScenario = typeof scenarios.$inferInsert;
+export type VariationSet = typeof variationSets.$inferSelect;
+export type VariationItem = typeof variationItems.$inferSelect;
 export type DubbingSource = typeof dubbingSources.$inferSelect;
 export type NewDubbingSource = typeof dubbingSources.$inferInsert;
 export type DubbingSegment = typeof dubbingSegments.$inferSelect;
@@ -434,3 +574,6 @@ export type DubbingTrack = typeof dubbingTracks.$inferSelect;
 export type NewDubbingTrack = typeof dubbingTracks.$inferInsert;
 export type DubbingSegmentLocale = typeof dubbingSegmentLocales.$inferSelect;
 export type NewDubbingSegmentLocale = typeof dubbingSegmentLocales.$inferInsert;
+export type Creative = typeof creatives.$inferSelect;
+export type NewCreative = typeof creatives.$inferInsert;
+export type CreativeMetric = typeof creativeMetrics.$inferSelect;

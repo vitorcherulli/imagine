@@ -11,6 +11,7 @@ docker/.env.portainer
 
 data
 public/generated
+criativos/
 *.db
 *.db-journal
 

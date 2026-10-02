@@ -614,7 +614,7 @@ export async function prepareImageBufferForVideoFrame(
   }
 }
 
-/** Crop/letterbox a photo into a social feed aspect ratio (4:5 or 1:1). */
+/** Crop/letterbox a photo into a social aspect ratio (4:5, 1:1 or 9:16). */
 export async function fitImageBufferToSocialAspect(
   input: { buffer: Buffer; ext: string },
   aspectRatio: SocialAspectRatio | unknown = "4:5",
@@ -657,6 +657,80 @@ export async function fitImageBufferToSocialAspect(
       outPath,
     ]);
     return await fs.readFile(outPath);
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+const BORDER_PROBE = 96;
+
+const median = (v: number[]) => [...v].sort((a, b) => a - b)[v.length >> 1];
+
+/** Mostly one tone across the line (glows at the ends are tolerated). */
+function isFlatLine(v: number[]): boolean {
+  const m = median(v);
+  return v.filter((x) => Math.abs(x - m) <= 12).length >= v.length * 0.75;
+}
+
+/**
+ * Size of a painted bar on one edge: flat lines from the edge that end in a hard tone jump.
+ * A flat area that fades into the scene (sky, studio backdrop) returns 0.
+ */
+function edgeBar(line: (i: number) => number[], count: number, from: number, step: number): number {
+  const tone = median(line(from));
+  let n = 0;
+  while (n < count / 2) {
+    const v = line(from + n * step);
+    if (!isFlatLine(v) || Math.abs(median(v) - tone) > 6) break;
+    n++;
+  }
+  if (n === 0 || n + 4 >= count) return 0;
+  const beyond = [1, 2, 3].reduce((sum, k) => sum + median(line(from + (n + k) * step)), 0) / 3;
+  return Math.abs(tone - beyond) >= 10 ? n : 0;
+}
+
+/**
+ * AI images sometimes come back letterboxed: flat painted bars on two opposite edges.
+ * Crops those bars; one-sided flat areas (sky, a wall) are left alone.
+ */
+export async function trimPaintedBorders(buffer: Buffer): Promise<Buffer> {
+  if (!hasFfmpeg() || buffer.length === 0) return buffer;
+  const ext = detectImageExt(buffer) ?? ".png";
+  const tmpDir = path.join(os.tmpdir(), "imagine-trim", `${Date.now()}_${Math.random().toString(36).slice(2)}`);
+  await fs.mkdir(tmpDir, { recursive: true });
+  try {
+    const inPath = path.join(tmpDir, `in${ext}`);
+    const rawPath = path.join(tmpDir, "probe.gray");
+    await fs.writeFile(inPath, buffer);
+    const P = BORDER_PROBE;
+    await runFfmpeg([
+      "-y", "-i", inPath,
+      "-vf", `scale=${P}:${P}:flags=area,format=gray`,
+      "-frames:v", "1", "-f", "rawvideo", rawPath,
+    ]);
+    const px = await fs.readFile(rawPath);
+    if (px.length < P * P) return buffer;
+    const row = (r: number) => Array.from(px.subarray(r * P, r * P + P));
+    const col = (c: number) => Array.from({ length: P }, (_, r) => px[r * P + c]);
+    const paired = (a: number, b: number) => a >= P * 0.03 && b >= P * 0.03 && a <= P * 0.35 && b <= P * 0.35;
+    const top = edgeBar(row, P, 0, 1);
+    const bottom = edgeBar(row, P, P - 1, -1);
+    const left = edgeBar(col, P, 0, 1);
+    const right = edgeBar(col, P, P - 1, -1);
+    const [t, b] = paired(top, bottom) ? [top + 1, bottom + 1] : [0, 0];
+    const [l, r] = paired(left, right) ? [left + 1, right + 1] : [0, 0];
+    if (!t && !l) return buffer;
+
+    const outPath = path.join(tmpDir, "out.png");
+    const f = (n: number) => (n / P).toFixed(4);
+    await runFfmpeg([
+      "-y", "-i", inPath,
+      "-vf", `crop=iw*${f(P - l - r)}:ih*${f(P - t - b)}:iw*${f(l)}:ih*${f(t)}`,
+      "-frames:v", "1", "-c:v", "png", outPath,
+    ]);
+    return await fs.readFile(outPath);
+  } catch {
+    return buffer;
   } finally {
     await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }

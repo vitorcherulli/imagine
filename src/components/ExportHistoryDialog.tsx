@@ -12,6 +12,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { ExportOptionsPanel } from "@/components/ExportOptionsPanel";
+import { AddToCreativesButton } from "@/components/creatives/AddToCreatives";
 import {
   ExportProgressPanel,
   type ExportProgressUiState,
@@ -177,6 +178,12 @@ export function ExportHistoryDialog({
                       Download
                     </a>
                   </Button>
+                  <AddToCreativesButton
+                    size="sm"
+                    label="Creative"
+                    name={item.downloadFilename.replace(/-v\d+-[^-]+\.mp4$/i, "")}
+                    source={{ type: "export", id: item.id, isVideo: true }}
+                  />
                 </li>
               ))}
             </ul>

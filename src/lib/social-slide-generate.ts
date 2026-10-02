@@ -6,10 +6,18 @@ import { fetchAvatarById } from "@/lib/avatar-block";
 import { buildSlideVisualPrompt } from "@/lib/social-prompts";
 import { getSocialImageAspectRatio } from "@/lib/social-aspect-ratio";
 import { deleteMediaByPublicUrl, readImageAsDataUrl, saveBuffer, withCacheBuster } from "@/lib/storage";
-import { fitImageBufferToSocialAspect } from "@/lib/ffmpeg";
+import { fitImageBufferToSocialAspect, trimPaintedBorders } from "@/lib/ffmpeg";
 import { setSocialSlideFields } from "@/lib/publication-server";
 import { fetchProjectDnaById } from "@/lib/project-dna-server";
 import { getOwnedMediaLibraryAsset } from "@/lib/media-library-server";
+import {
+  parseSocialReferenceAnalysis,
+  parseSocialReferences,
+  socialReferenceIndexForSlide,
+  socialReferenceItemForSlide,
+} from "@/lib/social-art/model";
+import { socialReferenceDataUrls } from "@/lib/social-references-server";
+import type { SocialReferenceItem } from "@/lib/social-art/types";
 
 export async function generateSocialSlideImage(input: {
   project: Project;
@@ -38,9 +46,32 @@ export async function generateSocialSlideImage(input: {
     }
   }
 
+  const references = parseSocialReferences(project.socialReferences);
+  const analysis = parseSocialReferenceAnalysis(project.socialReferenceNotes);
+  const copyIndex =
+    clientRefs.length === 0 ? socialReferenceIndexForSlide(analysis, slide.position, references.length) : null;
+  const copyRef = copyIndex !== null ? await socialReferenceDataUrls([references[copyIndex]], 1) : [];
+  const copyReference: SocialReferenceItem | null =
+    copyRef.length > 0
+      ? (analysis?.items[copyIndex!] ?? {
+          scene: "",
+          lead: "",
+          headline: "",
+          body: "",
+          layout: "photo",
+          position: "bottom",
+          align: "center",
+          overlay: "dark",
+          supportSize: "small",
+        })
+      : null;
+
+  const styleRefs =
+    clientRefs.length === 0 && !copyReference ? await socialReferenceDataUrls(references, 3) : [];
+
   const attachAvatarRefs =
     avatarRefs.length > 0 && imageModelSupportsPersonReferencePhotos(models.imageModel);
-  const envRefs = clientRefs;
+  const envRefs = [...clientRefs, ...copyRef, ...styleRefs];
   const hasRefs = envRefs.length > 0 || avatarRefs.length > 0;
 
   const prompt = buildSlideVisualPrompt({
@@ -51,6 +82,9 @@ export async function generateSocialSlideImage(input: {
       : null,
     dna,
     hasClientReference: clientRefs.length > 0,
+    hasStyleReferences: styleRefs.length > 0,
+    copyReference,
+    textReference: references.length > 0 ? socialReferenceItemForSlide(analysis, slide.position) : null,
   });
 
   const img = await generateImage({
@@ -74,7 +108,7 @@ export async function generateSocialSlideImage(input: {
   }
 
   const framed = await fitImageBufferToSocialAspect(
-    { buffer: rawBuffer, ext: ".png" },
+    { buffer: await trimPaintedBorders(rawBuffer), ext: ".png" },
     project.socialAspectRatio,
   );
 

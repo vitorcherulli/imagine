@@ -14,6 +14,7 @@ import {
   buildSocialSuggestionSystemPrompt,
   buildSocialSuggestionUserPrompt,
 } from "./social-prompts";
+import type { SocialReferenceMode } from "./social-art/types";
 import {
   searchWeb,
   serperWebSearchConfigured,
@@ -64,6 +65,9 @@ export interface SuggestProjectInput {
   postKind?: string;
   slideCount?: number;
   socialAspectRatio?: string;
+  /** Style and content read from reference posts (social only). */
+  referenceNotes?: string;
+  referenceMode?: SocialReferenceMode;
 }
 
 export type StoryIdeaSource = "ai" | "trend";
@@ -414,6 +418,8 @@ export async function generateAiStoryIdeas(input: SuggestProjectInput): Promise<
               postKind: input.postKind,
               slideCount: input.slideCount,
               socialAspectRatio: input.socialAspectRatio,
+              referenceNotes: input.referenceNotes,
+              referenceMode: input.referenceMode,
               projectIdentity: input.projectIdentity,
               scriptLanguage,
             })

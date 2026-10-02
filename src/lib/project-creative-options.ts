@@ -3,24 +3,39 @@ import {
   Aperture,
   Baby,
   BookOpen,
+  Bot,
   Box,
+  Briefcase,
+  Building2,
   Camera,
   Clapperboard,
+  Code2,
   Droplets,
+  Dumbbell,
   FileVideo,
   Flame,
   Ghost,
+  GraduationCap,
   Grid3x3,
   Heart,
   Laugh,
+  Layers,
+  Megaphone,
+  Monitor,
   Moon,
+  Plane,
   Rocket,
   Search,
+  Shapes,
+  Shirt,
+  ShoppingCart,
   Smartphone,
   Smile,
   Sparkles,
+  Square,
   Theater,
   TrendingUp,
+  UtensilsCrossed,
   Zap,
 } from "lucide-react";
 
@@ -43,6 +58,17 @@ export const PROJECT_GENRES: CreativeOption[] = [
   { id: "Mystery", label: "Mystery", icon: Search },
   { id: "Romance", label: "Romance", icon: Heart },
   { id: "OF / Sexy", label: "OF / Sexy", icon: Flame },
+  { id: "SaaS / Software", label: "SaaS / Software", icon: Code2 },
+  { id: "Tech / AI", label: "Tech / AI", icon: Bot },
+  { id: "Marketing / Ads", label: "Marketing / Ads", icon: Megaphone },
+  { id: "Business / Finance", label: "Business / Finance", icon: Briefcase },
+  { id: "E-commerce", label: "E-commerce", icon: ShoppingCart },
+  { id: "Education / Course", label: "Education / Course", icon: GraduationCap },
+  { id: "Health / Fitness", label: "Health / Fitness", icon: Dumbbell },
+  { id: "Beauty / Fashion", label: "Beauty / Fashion", icon: Shirt },
+  { id: "Food / Restaurant", label: "Food / Restaurant", icon: UtensilsCrossed },
+  { id: "Real Estate", label: "Real Estate", icon: Building2 },
+  { id: "Travel / Tourism", label: "Travel / Tourism", icon: Plane },
 ];
 
 export const PROJECT_VISUAL_STYLES: CreativeOption[] = [
@@ -57,6 +83,11 @@ export const PROJECT_VISUAL_STYLES: CreativeOption[] = [
   { id: "Noir", label: "Noir", icon: Moon },
   { id: "Pixel Art", label: "Pixel Art", icon: Grid3x3 },
   { id: "Storybook", label: "Storybook", icon: BookOpen },
+  { id: "UI Mockup", label: "UI Mockup", icon: Monitor },
+  { id: "Product Shot", label: "Product Shot", icon: Box },
+  { id: "Flat / Vector", label: "Flat / Vector", icon: Shapes },
+  { id: "Isometric", label: "Isometric", icon: Layers },
+  { id: "Minimal / Clean", label: "Minimal / Clean", icon: Square },
 ];
 
 export const PROJECT_GENRE_IDS = PROJECT_GENRES.map((g) => g.id);
@@ -86,6 +117,16 @@ export const VISUAL_STYLE_PROMPT_DESCRIPTORS: Record<string, string> = {
   "Pixel Art": "retro pixel art, limited palette, crisp dithering, 16-bit aesthetic",
   Storybook:
     "children's storybook illustration, warm hand-drawn textures, soft edges, whimsical charm",
+  "UI Mockup":
+    "clean product marketing visual showing a modern software interface on a laptop, phone or floating browser window, sleek SaaS dashboard aesthetic, soft gradient background, subtle depth and shadows, crisp UI shapes with no legible text",
+  "Product Shot":
+    "professional commercial product photography, studio lighting, seamless backdrop, crisp reflections, hero product centered, advertising quality",
+  "Flat / Vector":
+    "flat vector illustration, bold geometric shapes, clean solid colors, modern brand illustration style, no gradients noise",
+  Isometric:
+    "isometric 3D illustration, clean 30-degree perspective, tidy modular objects, soft pastel lighting, tech explainer aesthetic",
+  "Minimal / Clean":
+    "minimalist clean composition, generous negative space, limited palette, soft even lighting, premium modern brand look",
 };
 
 /** Expand a visual style label into a descriptive prompt cue (falls back to the label). */

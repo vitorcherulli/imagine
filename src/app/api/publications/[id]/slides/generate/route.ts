@@ -14,6 +14,12 @@ import {
 } from "@/lib/social-prompts";
 import { normalizeProjectScriptLanguage } from "@/lib/project-language";
 import { clampSlideCount, normalizePostFormat } from "@/lib/social-content";
+import {
+  parseSocialReferenceAnalysis,
+  parseSocialReferences,
+  socialReferenceItemForSlide,
+} from "@/lib/social-art/model";
+import { DEFAULT_SOCIAL_SLIDE_ART, SOCIAL_ART_TEXT_LIMITS } from "@/lib/social-art/types";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -24,6 +30,7 @@ interface SlideDraft {
   headline?: string;
   body_text?: string;
   visual_prompt?: string;
+  lead?: string;
 }
 
 export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
@@ -72,6 +79,7 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
 
     const now = new Date();
     const rows = drafts.map((draft, index) => ({
+      lead: draft.lead?.trim().slice(0, SOCIAL_ART_TEXT_LIMITS.lead) ?? "",
       id: createId(),
       projectId: project.id,
       position: draft.position ?? index,
@@ -80,17 +88,32 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
       bodyText: draft.body_text?.trim() || "",
       visualPrompt: draft.visual_prompt?.trim() || "",
       status: "draft",
+      art: null as string | null,
       avatarId: project.socialUseAvatar ? project.avatarId : null,
       createdAt: now,
       updatedAt: now,
     }));
 
     rows.sort((a, b) => a.position - b.position);
+    const analysis = parseSocialReferenceAnalysis(project.socialReferenceNotes);
+    const hasRefs = parseSocialReferences(project.socialReferences).length > 0;
     rows.forEach((row, i) => {
       row.position = i;
+      const item = hasRefs ? socialReferenceItemForSlide(analysis, i) : null;
+      if (item) {
+        row.art = JSON.stringify({
+          ...DEFAULT_SOCIAL_SLIDE_ART,
+          layout: item.layout,
+          position: item.position,
+          align: item.align,
+          overlay: item.overlay,
+          supportSize: item.supportSize,
+          lead: item.lead ? row.lead : "",
+        });
+      }
     });
 
-    await db.insert(schema.socialSlides).values(rows);
+    await db.insert(schema.socialSlides).values(rows.map(({ lead: _lead, ...row }) => row));
 
     await db
       .update(schema.projects)

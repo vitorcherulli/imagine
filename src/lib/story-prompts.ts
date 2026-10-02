@@ -20,8 +20,25 @@ export function getGenreStoryHint(genre: string): string | null {
       "Strong hooks, slow reveals, confident poses, luxury settings, cinematic lighting.",
     ].join(" ");
   }
-  return null;
+  return BUSINESS_GENRE_HINTS[genre] ?? null;
 }
+
+const AD_COPY_BASE =
+  "Write as high-converting marketing content: a scroll-stopping hook, one clear pain point, the benefit (not just features), proof or specifics, and a direct call to action.";
+
+const BUSINESS_GENRE_HINTS: Record<string, string> = {
+  "SaaS / Software": `Genre is SaaS / software marketing. ${AD_COPY_BASE} Focus on the problem the software solves, time/money saved, key features framed as outcomes, ease of onboarding, integrations, and a CTA like free trial or demo. Visuals: product UI on devices, dashboards, clean tech workspaces.`,
+  "Tech / AI": `Genre is technology / AI marketing. ${AD_COPY_BASE} Make complex tech feel simple and powerful — automation, productivity, before/after workflows. Visuals: modern devices, abstract data, futuristic but clean.`,
+  "Marketing / Ads": `Genre is direct-response advertising. ${AD_COPY_BASE} Use proven ad frameworks (AIDA, PAS), urgency or scarcity when appropriate, and benefit-driven headlines.`,
+  "Business / Finance": `Genre is business / finance content. ${AD_COPY_BASE} Credible, authoritative tone with concrete numbers, growth, ROI and trust signals. Visuals: professional settings, charts, confident people.`,
+  "E-commerce": `Genre is e-commerce product promotion. ${AD_COPY_BASE} Highlight the product, offer, price/discount, social proof and shipping/guarantee. Visuals: hero product shots, lifestyle usage.`,
+  "Education / Course": `Genre is course / education marketing. ${AD_COPY_BASE} Promise a transformation, show what students learn, the instructor's authority and results.`,
+  "Health / Fitness": `Genre is health & fitness marketing. ${AD_COPY_BASE} Motivating, results-oriented, no unrealistic medical claims. Visuals: energetic training, healthy lifestyle.`,
+  "Beauty / Fashion": `Genre is beauty / fashion marketing. ${AD_COPY_BASE} Aspirational, aesthetic, trend-aware. Visuals: styled products, models, editorial lighting.`,
+  "Food / Restaurant": `Genre is food / restaurant marketing. ${AD_COPY_BASE} Appetizing, sensory language, menu highlights, location/delivery CTA. Visuals: mouth-watering close-up food photography.`,
+  "Real Estate": `Genre is real-estate marketing. ${AD_COPY_BASE} Highlight location, space, lifestyle and investment value; CTA to schedule a visit. Visuals: bright interiors, architecture, aerial views.`,
+  "Travel / Tourism": `Genre is travel / tourism marketing. ${AD_COPY_BASE} Evoke wanderlust, unique experiences and practical value (packages, dates). Visuals: stunning destinations, people enjoying the trip.`,
+};
 
 export interface BlockDraft {
   segmentType: "intro" | "development" | "climax" | "resolution";

@@ -24,6 +24,9 @@ import { galleryAssetThumbnailFallback, galleryAssetThumbnailUrl, isVideoAsset }
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/components/ui/use-toast";
+import { AddToCreativesButton } from "@/components/creatives/AddToCreatives";
+
+const CREATIVE_MIME_TYPES = ["image/png", "image/jpeg", "image/webp", "video/mp4", "video/quicktime"];
 import {
   Dialog,
   DialogContent,
@@ -783,6 +786,15 @@ export function MediaLibraryExplorer({ dnas = [] }: { dnas?: DnaMeta[] }) {
                     >
                       <Download className="h-3 w-3" />
                     </button>
+                    {CREATIVE_MIME_TYPES.includes(asset.mimeType) ? (
+                      <AddToCreativesButton
+                        iconOnly
+                        variant="ghost"
+                        className="h-auto w-auto rounded bg-black/50 p-1 text-white hover:bg-black/70 hover:text-white"
+                        name={asset.name.replace(/\.[^.]+$/, "")}
+                        source={{ type: "asset", id: asset.id, isVideo: isVideoAsset(asset) }}
+                      />
+                    ) : null}
                     <button
                       type="button"
                       className="rounded bg-black/50 p-1 text-white hover:bg-black/70"

@@ -5,6 +5,8 @@ import { tryUser } from "@/lib/auth";
 import { resolveProjectIdentityForProject } from "@/lib/project-dna-server";
 import { db, schema } from "@/lib/db";
 import { and, eq } from "drizzle-orm";
+import { SOCIAL_ASPECT_RATIO_IDS } from "@/lib/social-aspect-ratio";
+import { POST_KIND_IDS } from "@/lib/social-content";
 import {
   generateAiStoryIdeas,
   rankTopStoryPicks,
@@ -24,11 +26,13 @@ const bodySchema = z.object({
   scriptLanguage: z.enum(["en", "pt", "es"]).optional(),
   contentType: z.enum(["video", "social"]).optional(),
   postFormat: z.enum(["carousel", "single"]).optional(),
-  postKind: z
-    .enum(["educational", "list", "quote", "promo", "story", "mixed"])
-    .optional(),
+  postKind: z.enum(POST_KIND_IDS).optional(),
   slideCount: z.number().int().min(1).max(10).optional(),
-  socialAspectRatio: z.enum(["4:5", "1:1"]).optional(),
+  socialAspectRatio: z.enum(SOCIAL_ASPECT_RATIO_IDS).optional(),
+  referenceNotes: z.string().max(12000).optional(),
+  referenceMode: z.enum(["inspire", "copy"]).optional(),
+  /** Skip web trends and ranking — just the AI ideas. */
+  ideasOnly: z.boolean().optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -73,9 +77,15 @@ export async function POST(req: NextRequest) {
     postKind: parsed.data.postKind,
     slideCount: parsed.data.slideCount,
     socialAspectRatio: parsed.data.socialAspectRatio,
+    referenceNotes: parsed.data.referenceNotes,
+    referenceMode: parsed.data.referenceNotes ? parsed.data.referenceMode : undefined,
   };
 
   try {
+    if (suggestInput.referenceMode === "copy" || parsed.data.ideasOnly) {
+      const aiIdeas = await generateAiStoryIdeas(suggestInput);
+      return NextResponse.json({ aiIdeas, trendIdeas: [], topPicks: [], trendsMeta: null, ideas: aiIdeas });
+    }
     const [aiIdeas, trendResult] = await Promise.all([
       generateAiStoryIdeas(suggestInput),
       runTrendStoryIdeas(suggestInput),

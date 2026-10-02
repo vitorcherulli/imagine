@@ -3,7 +3,7 @@ import { z } from "zod";
 import { tryUser } from "@/lib/auth";
 import { getSocialSlideForUser, setSocialSlideFields } from "@/lib/publication-server";
 import { getOwnedMediaLibraryAsset } from "@/lib/media-library-server";
-import { listDnaClientGalleryAssets } from "@/lib/dna-gallery-server";
+import { enhanceClientPhotoForSlide, isClientPhotoOf } from "@/lib/social-photo-server";
 import {
   deleteMediaByPublicUrl,
   readMediaBuffer,
@@ -13,11 +13,11 @@ import {
 import { fitImageBufferToSocialAspect } from "@/lib/ffmpeg";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 120;
+export const maxDuration = 300;
 
 const bodySchema = z.object({
   assetId: z.string().min(1),
-  mode: z.enum(["use", "reference"]).default("use"),
+  mode: z.enum(["use", "reference", "enhance"]).default("use"),
 });
 
 function extFromMime(mimeType: string, url: string): string {
@@ -40,21 +40,18 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: "Invalid input" }, { status: 400 });
   }
 
-  const dnaId = owned.project.projectDnaId;
   const asset = await getOwnedMediaLibraryAsset(parsed.data.assetId, userId);
   if (!asset || asset.kind !== "image") {
     return NextResponse.json({ error: "Image not found" }, { status: 404 });
   }
 
-  if (dnaId) {
-    const dnaAssets = await listDnaClientGalleryAssets(userId, dnaId);
-    const inDnaGallery = dnaAssets.some((a) => a.id === asset.id);
-    if (!inDnaGallery && asset.projectId !== owned.project.id) {
-      return NextResponse.json(
-        { error: "Pick a photo from this brand's client gallery" },
-        { status: 400 },
-      );
-    }
+  if (asset.projectId !== owned.project.id && !(await isClientPhotoOf(userId, owned.project, asset.id))) {
+    return NextResponse.json({ error: "Pick a photo from this publication's client photos" }, { status: 400 });
+  }
+
+  if (parsed.data.mode === "enhance") {
+    void enhanceClientPhotoForSlide({ userId, project: owned.project, slide: owned.slide, asset });
+    return NextResponse.json({ ok: true, status: "generating" });
   }
 
   if (parsed.data.mode === "reference") {

@@ -13,10 +13,21 @@ import {
   defaultSlideCount,
   normalizePostFormat,
   normalizePostKind,
+  POST_KIND_IDS,
 } from "@/lib/social-content";
-import { normalizeSocialAspectRatio } from "@/lib/social-aspect-ratio";
+import { normalizeSocialAspectRatio, SOCIAL_ASPECT_RATIO_IDS } from "@/lib/social-aspect-ratio";
+import {
+  socialArtColorsSchema,
+  socialReferenceAnalysisSchema,
+  socialReferenceIdsSchema,
+  socialReferenceModeSchema,
+  socialTitleStyleSchema,
+} from "@/lib/social-art/schemas";
+import { DEFAULT_SOCIAL_ART_SETTINGS, type SocialArtSettings } from "@/lib/social-art/types";
+import { analyzeSocialReferences, resolveOwnedSocialReferences } from "@/lib/social-references-server";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 120;
 
 const createSchema = z
   .object({
@@ -27,16 +38,19 @@ const createSchema = z
     visualStyle: z.string().min(1).max(60),
     voiceTone: z.string().min(1).max(60),
     postFormat: z.enum(["carousel", "single"]).default("carousel"),
-    socialAspectRatio: z.enum(["4:5", "1:1"]).default("4:5"),
-    postKind: z
-      .enum(["educational", "list", "quote", "promo", "story", "mixed"])
-      .default("educational"),
+    socialAspectRatio: z.enum(SOCIAL_ASPECT_RATIO_IDS).default("4:5"),
+    postKind: z.enum(POST_KIND_IDS).default("educational"),
     slideCount: z.number().int().min(1).max(10).optional(),
     socialUseAvatar: z.boolean().default(false),
     scriptLanguage: z.enum(["en", "pt", "es"]).default("en"),
     avatarId: z.string().nullable().optional(),
     avatarIds: z.array(z.string()).optional(),
     folderId: z.string().nullable().optional(),
+    referenceAssetIds: socialReferenceIdsSchema.optional(),
+    referenceAnalysis: socialReferenceAnalysisSchema.nullable().optional(),
+    referenceMode: socialReferenceModeSchema.default("inspire"),
+    titleStyle: socialTitleStyleSchema.nullable().optional(),
+    artColors: socialArtColorsSchema.nullable().optional(),
   })
   .merge(projectApiModelsSchema);
 
@@ -53,7 +67,18 @@ export async function POST(req: NextRequest) {
   const id = createId();
   const now = new Date();
   const defaults = getDefaultApiModels();
-  const { avatarId, avatarIds, projectDnaId, socialUseAvatar, ...rest } = parsed.data;
+  const {
+    avatarId,
+    avatarIds,
+    projectDnaId,
+    socialUseAvatar,
+    referenceAssetIds,
+    referenceAnalysis,
+    referenceMode,
+    titleStyle,
+    artColors,
+    ...rest
+  } = parsed.data;
 
   if (projectDnaId) {
     const dna = await assertOwnedProjectDna(projectDnaId, userId);
@@ -69,6 +94,19 @@ export async function POST(req: NextRequest) {
     rest.slideCount ?? defaultSlideCount(postFormat),
     postFormat,
   );
+
+  const references = await resolveOwnedSocialReferences(userId, referenceAssetIds ?? []);
+  let analysis = references.length > 0 ? (referenceAnalysis ?? null) : null;
+  if (references.length > 0 && !analysis) {
+    analysis = await analyzeSocialReferences(references).catch(() => null);
+    if (analysis?.language) rest.scriptLanguage = analysis.language;
+  }
+  if (analysis) analysis = { ...analysis, mode: referenceMode };
+  const socialArt: SocialArtSettings = {
+    ...DEFAULT_SOCIAL_ART_SETTINGS,
+    titleStyle: titleStyle ?? analysis?.titleStyle ?? null,
+    colors: artColors ?? analysis?.palette ?? null,
+  };
 
   const normalizedIds =
     socialUseAvatar ? (avatarIds ?? (avatarId ? [avatarId] : [])) : [];
@@ -95,6 +133,9 @@ export async function POST(req: NextRequest) {
     projectDnaId: projectDnaId ?? null,
     folderId: parsed.data.folderId ?? null,
     storyDescription: rest.storyDescription,
+    socialArt: JSON.stringify(socialArt),
+    socialReferences: references.length > 0 ? JSON.stringify(references) : null,
+    socialReferenceNotes: analysis ? JSON.stringify(analysis) : null,
     status: "draft",
     createdAt: now,
     updatedAt: now,

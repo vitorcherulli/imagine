@@ -1,8 +1,13 @@
 import { OPENROUTER_MODELS, openRouterFetch, formatOpenRouterError } from "./client";
 
+export type ChatContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
-  content: string;
+  /** Parts with images need a vision-capable model. */
+  content: string | ChatContentPart[];
 }
 
 export async function chatCompletion(opts: {

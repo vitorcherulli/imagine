@@ -14,8 +14,10 @@ import {
   Images,
   Languages,
   LayoutGrid,
+  Megaphone,
   Mountain,
   UserSquare,
+  Wand2,
 } from "lucide-react";
 import type { Project } from "@/lib/db/schema";
 import { cn } from "@/lib/utils";
@@ -240,6 +242,20 @@ export function Sidebar({
               active={pathname?.startsWith("/scenarios")}
               icon={<Mountain className="h-3.5 w-3.5" />}
             />
+            <SidebarNavLink
+              href="/variations"
+              title="Variations — new versions of an ad image"
+              label="Variations"
+              active={pathname?.startsWith("/variations")}
+              icon={<Wand2 className="h-3.5 w-3.5" />}
+            />
+            <SidebarNavLink
+              href="/creatives"
+              title="Creatives — ad library, naming and results"
+              label="Creatives"
+              active={pathname?.startsWith("/creatives")}
+              icon={<Megaphone className="h-3.5 w-3.5" />}
+            />
           </nav>
 
           <div className="space-y-1 border-t border-border px-1.5 py-2">
@@ -293,6 +309,22 @@ export function Sidebar({
             collapsed
             active={pathname?.startsWith("/scenarios")}
             icon={<Mountain className="h-4 w-4" />}
+          />
+          <SidebarNavLink
+            href="/variations"
+            title="Variations"
+            label="Variations"
+            collapsed
+            active={pathname?.startsWith("/variations")}
+            icon={<Wand2 className="h-4 w-4" />}
+          />
+          <SidebarNavLink
+            href="/creatives"
+            title="Creatives"
+            label="Creatives"
+            collapsed
+            active={pathname?.startsWith("/creatives")}
+            icon={<Megaphone className="h-4 w-4" />}
           />
           <div className="mt-auto flex w-full flex-col items-center gap-2 border-t border-border px-1 pt-2 pb-2">
             <AppSettingsDialog collapsed />

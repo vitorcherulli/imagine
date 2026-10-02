@@ -6,6 +6,7 @@ import { Sidebar } from "@/components/Sidebar";
 import { SocialPublicationEditor } from "@/components/SocialPublicationEditor";
 import { isSocialProject } from "@/lib/social-content";
 import { getSocialPublicationForUser } from "@/lib/publication-server";
+import { loadSocialArtBrand } from "@/lib/social-art/server";
 
 export const dynamic = "force-dynamic";
 
@@ -13,13 +14,18 @@ export default async function PublicationPage({ params }: { params: { id: string
   const { userId } = await auth();
   if (!userId) return null;
 
-  const [projects, data] = await Promise.all([
+  const [projects, data, dnaOptions] = await Promise.all([
     db
       .select()
       .from(schema.projects)
       .where(eq(schema.projects.userId, userId))
       .orderBy(desc(schema.projects.updatedAt)),
     getSocialPublicationForUser(params.id, userId),
+    db
+      .select({ id: schema.projectDna.id, name: schema.projectDna.name })
+      .from(schema.projectDna)
+      .where(eq(schema.projectDna.userId, userId))
+      .orderBy(desc(schema.projectDna.updatedAt)),
   ]);
 
   if (!data) {
@@ -34,15 +40,8 @@ export default async function PublicationPage({ params }: { params: { id: string
     notFound();
   }
 
-  let dnaName: string | null = null;
-  if (data.project.projectDnaId) {
-    const [dna] = await db
-      .select({ name: schema.projectDna.name })
-      .from(schema.projectDna)
-      .where(eq(schema.projectDna.id, data.project.projectDnaId))
-      .limit(1);
-    dnaName = dna?.name ?? null;
-  }
+  const brand = await loadSocialArtBrand(userId, data.project.projectDnaId, data.project.title);
+  const dnaName = brand.dnaId ? brand.name : null;
 
   return (
     <div className="flex h-screen w-full">
@@ -54,6 +53,8 @@ export default async function PublicationPage({ params }: { params: { id: string
             initialSlides={data.slides}
             initialMetadata={data.metadata}
             dnaName={dnaName}
+            dnaOptions={dnaOptions}
+            brand={brand}
           />
         </section>
       </main>

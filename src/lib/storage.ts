@@ -237,6 +237,34 @@ export async function saveScenarioBuffer(
   return writeBytes(key, buf);
 }
 
+export async function saveVariationBuffer(
+  userId: string,
+  setId: string,
+  filename: string,
+  buf: Buffer,
+): Promise<string> {
+  const key = path.posix.join("generated", "_variations", userId, setId, filename);
+  return writeBytes(key, buf);
+}
+
+export async function deleteVariationSetMedia(userId: string, setId: string): Promise<void> {
+  await deleteMediaPrefix(path.posix.join("generated", "_variations", userId, setId));
+}
+
+export async function saveCreativeBuffer(
+  userId: string,
+  creativeId: string,
+  filename: string,
+  buf: Buffer,
+): Promise<string> {
+  const key = path.posix.join("generated", "_creatives", userId, creativeId, filename);
+  return writeBytes(key, buf);
+}
+
+export async function deleteCreativeMedia(userId: string, creativeId: string): Promise<void> {
+  await deleteMediaPrefix(path.posix.join("generated", "_creatives", userId, creativeId));
+}
+
 export async function saveGalleryBuffer(
   userId: string,
   filename: string,

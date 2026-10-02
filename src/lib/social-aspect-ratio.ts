@@ -1,4 +1,6 @@
-export type SocialAspectRatio = "4:5" | "1:1";
+export const SOCIAL_ASPECT_RATIO_IDS = ["4:5", "1:1", "9:16"] as const;
+
+export type SocialAspectRatio = (typeof SOCIAL_ASPECT_RATIO_IDS)[number];
 
 export interface SocialAspectRatioSpec {
   id: SocialAspectRatio;
@@ -36,10 +38,21 @@ export const SOCIAL_ASPECT_RATIOS: Record<SocialAspectRatio, SocialAspectRatioSp
     width: 1080,
     height: 1080,
   },
+  "9:16": {
+    id: "9:16",
+    label: "Story (9:16)",
+    shortLabel: "9:16",
+    description: "Full-screen Instagram and Facebook Stories.",
+    imageAspectRatio: "9:16",
+    previewAspectClass: "aspect-[9/16]",
+    cardAspectClass: "aspect-[9/16]",
+    width: 1080,
+    height: 1920,
+  },
 };
 
 export function isSocialAspectRatio(value: unknown): value is SocialAspectRatio {
-  return value === "4:5" || value === "1:1";
+  return SOCIAL_ASPECT_RATIO_IDS.includes(value as SocialAspectRatio);
 }
 
 export function normalizeSocialAspectRatio(value: unknown): SocialAspectRatio {
@@ -58,6 +71,9 @@ export function getSocialFramingHint(value: unknown): string {
   const spec = getSocialAspectRatioSpec(value);
   if (spec.id === "1:1") {
     return "Square 1:1 composition — centered subject, balanced margins, feed-friendly framing.";
+  }
+  if (spec.id === "9:16") {
+    return "Vertical 9:16 full-screen Story framing — the scene fills the whole frame edge to edge; main subject in the middle third, with calmer areas of the same scene near the top and bottom for text.";
   }
   return "Portrait 4:5 mobile feed framing — strong vertical composition, safe margins for UI overlays.";
 }

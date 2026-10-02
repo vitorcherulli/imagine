@@ -21,7 +21,7 @@ export const projects = sqliteTable("projects", {
   contentType: text("content_type").notNull().default("video"),
   /** carousel | single — social publications only */
   postFormat: text("post_format").notNull().default("carousel"),
-  /** 4:5 | 1:1 — social feed aspect ratio */
+  /** 4:5 | 1:1 | 9:16 — social post aspect ratio */
   socialAspectRatio: text("social_aspect_ratio").notNull().default("4:5"),
   /** educational | list | quote | promo | story | mixed */
   postKind: text("post_kind").notNull().default("educational"),
@@ -29,6 +29,12 @@ export const projects = sqliteTable("projects", {
   slideCount: integer("slide_count").notNull().default(7),
   /** When 1, include project avatar in slide images */
   socialUseAvatar: integer("social_use_avatar", { mode: "boolean" }).notNull().default(false),
+  /** JSON SocialArtSettings — brand art overlay toggles (handle, logo, shapes, counter) */
+  socialArt: text("social_art"),
+  /** JSON SocialReference[] — inspiration images for this publication */
+  socialReferences: text("social_references"),
+  /** AI read of the reference images (style, content, palette) fed into prompts */
+  socialReferenceNotes: text("social_reference_notes"),
   /** horizontal = 16:9 YouTube · vertical = 9:16 Reels/Shorts/TikTok */
   videoFormat: text("video_format").notNull().default("horizontal"),
   /** calm | balanced | dynamic | hyper — how fast visuals change */
@@ -253,6 +259,143 @@ export const scenarios = sqliteTable("scenarios", {
     .default(sql`(unixepoch())`),
 });
 
+export const variationSets = sqliteTable("variation_sets", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  name: text("name").notNull(),
+  sourceImageUrl: text("source_image_url").notNull(),
+  instructions: text("instructions"),
+  aspectRatio: text("aspect_ratio").notNull().default("1:1"),
+  imageModel: text("image_model"),
+  videoModel: text("video_model"),
+  textMode: text("text_mode").notNull().default("keep"),
+  customText: text("custom_text"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+export const variationItems = sqliteTable("variation_items", {
+  id: text("id").primaryKey(),
+  setId: text("set_id")
+    .notNull()
+    .references(() => variationSets.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull(),
+  direction: text("direction"),
+  imageUrl: text("image_url"),
+  status: text("status").notNull().default("generating"),
+  error: text("error"),
+  videoUrl: text("video_url"),
+  videoStatus: text("video_status"),
+  videoError: text("video_error"),
+  imageModel: text("image_model"),
+  videoModel: text("video_model"),
+  headline: text("headline"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+/** One file of an ad creative. Pieces sharing `code` are the same concept (hook). */
+export const creatives = sqliteTable("creatives", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  code: integer("code").notNull(),
+  version: integer("version").notNull().default(1),
+  product: text("product").notNull(),
+  angle: text("angle").notNull(),
+  hook: text("hook").notNull().default(""),
+  format: text("format").notNull(),
+  creator: text("creator").notNull().default(""),
+  aspectRatio: text("aspect_ratio").notNull(),
+  language: text("language").notNull().default("PT"),
+  kind: text("kind").notNull().default("image"),
+  fileUrl: text("file_url").notNull(),
+  thumbUrl: text("thumb_url"),
+  mimeType: text("mime_type").notNull(),
+  width: integer("width"),
+  height: integer("height"),
+  durationSeconds: real("duration_seconds"),
+  sizeBytes: integer("size_bytes").notNull().default(0),
+  originalName: text("original_name").notNull().default(""),
+  source: text("source").notNull().default("upload"),
+  sourceRef: text("source_ref"),
+  /** Manual override; null = suggested from Meta metrics. */
+  status: text("status"),
+  notes: text("notes").notNull().default(""),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+/** Rows of each Meta Ads Manager export, matched to creatives by the C### code in the ad name. */
+export const creativeMetrics = sqliteTable("creative_metrics", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  adName: text("ad_name").notNull(),
+  code: integer("code"),
+  spend: real("spend").notNull().default(0),
+  impressions: integer("impressions").notNull().default(0),
+  clicks: integer("clicks").notNull().default(0),
+  results: real("results").notNull().default(0),
+  sourceFile: text("source_file").notNull().default(""),
+  /** creative_metric_imports.id — null only for rows imported before periods existed. */
+  importId: text("import_id"),
+  importedAt: integer("imported_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+/** One imported Meta Ads export = one reporting period. */
+export const creativeMetricImports = sqliteTable("creative_metric_imports", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  sourceFile: text("source_file").notNull().default(""),
+  /** "YYYY-MM-DD" from the export's reporting columns, null when it has none. */
+  periodStart: text("period_start"),
+  periodEnd: text("period_end"),
+  rows: integer("rows").notNull().default(0),
+  matched: integer("matched").notNull().default(0),
+  importedAt: integer("imported_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+/** Read-only public links to part of the creatives library. `scope`: all | folder | concept. */
+export const creativeShares = sqliteTable("creative_shares", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  token: text("token").notNull(),
+  scope: text("scope").notNull(),
+  /** Folder name or concept code, "" for all. */
+  scopeValue: text("scope_value").notNull().default(""),
+  expiresAt: integer("expires_at", { mode: "timestamp" }),
+  views: integer("views").notNull().default(0),
+  lastViewedAt: integer("last_viewed_at", { mode: "timestamp" }),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+/** Creative folders are products; this keeps empty ones around. `name` matches `creatives.product`. */
+export const creativeFolders = sqliteTable("creative_folders", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  name: text("name").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
 export const storyBlocks = sqliteTable("story_blocks", {
   id: text("id").primaryKey(),
   projectId: text("project_id")
@@ -320,6 +463,8 @@ export const socialSlides = sqliteTable("social_slides", {
   imageUrl: text("image_url"),
   /** Client gallery asset used as photo base / AI reference */
   referenceAssetId: text("reference_asset_id"),
+  /** JSON SocialSlideArt — layout, text position, small line, label, photo framing */
+  art: text("art"),
   status: text("status").notNull().default("draft"),
   avatarId: text("avatar_id"),
   errorMessage: text("error_message"),
@@ -342,6 +487,31 @@ export const socialMetadata = sqliteTable("social_metadata", {
   hashtags: text("hashtags").notNull().default("[]"),
   slideNotes: text("slide_notes").notNull().default("[]"),
   status: text("status").notNull().default("draft"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+/** Brand art kit per DNA — exact colors and fonts for the publication art overlay. */
+export const socialArtBrandKits = sqliteTable("social_art_brand_kits", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  projectDnaId: text("project_dna_id")
+    .notNull()
+    .unique()
+    .references(() => projectDna.id, { onDelete: "cascade" }),
+  handle: text("handle").notNull().default(""),
+  /** JSON { dark, accent, light } hex colors */
+  colors: text("colors").notNull().default("{}"),
+  accentShine: integer("accent_shine", { mode: "boolean" }).notNull().default(true),
+  fontHeading: text("font_heading").notNull().default("Montserrat"),
+  fontBody: text("font_body").notNull().default("Montserrat"),
+  uppercaseTitles: integer("uppercase_titles", { mode: "boolean" }).notNull().default(true),
+  decorColor: text("decor_color").notNull().default("#f59e0b"),
+  decorDefault: integer("decor_default", { mode: "boolean" }).notNull().default(false),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .default(sql`(unixepoch())`),
@@ -531,6 +701,8 @@ export type SocialSlide = typeof socialSlides.$inferSelect;
 export type NewSocialSlide = typeof socialSlides.$inferInsert;
 export type SocialMetadata = typeof socialMetadata.$inferSelect;
 export type NewSocialMetadata = typeof socialMetadata.$inferInsert;
+export type SocialArtBrandKit = typeof socialArtBrandKits.$inferSelect;
+export type NewSocialArtBrandKit = typeof socialArtBrandKits.$inferInsert;
 export type YoutubeMetadata = typeof youtubeMetadata.$inferSelect;
 export type Export = typeof exports.$inferSelect;
 export type ProjectDna = typeof projectDna.$inferSelect;
@@ -539,6 +711,8 @@ export type Avatar = typeof avatars.$inferSelect;
 export type NewAvatar = typeof avatars.$inferInsert;
 export type Scenario = typeof scenarios.$inferSelect;
 export type NewScenario = typeof scenarios.$inferInsert;
+export type VariationSet = typeof variationSets.$inferSelect;
+export type VariationItem = typeof variationItems.$inferSelect;
 export type DubbingSource = typeof dubbingSources.$inferSelect;
 export type NewDubbingSource = typeof dubbingSources.$inferInsert;
 export type DubbingSegment = typeof dubbingSegments.$inferSelect;
@@ -549,3 +723,8 @@ export type DubbingTrack = typeof dubbingTracks.$inferSelect;
 export type NewDubbingTrack = typeof dubbingTracks.$inferInsert;
 export type DubbingSegmentLocale = typeof dubbingSegmentLocales.$inferSelect;
 export type NewDubbingSegmentLocale = typeof dubbingSegmentLocales.$inferInsert;
+export type Creative = typeof creatives.$inferSelect;
+export type NewCreative = typeof creatives.$inferInsert;
+export type CreativeMetric = typeof creativeMetrics.$inferSelect;
+export type CreativeMetricImport = typeof creativeMetricImports.$inferSelect;
+export type CreativeShare = typeof creativeShares.$inferSelect;
