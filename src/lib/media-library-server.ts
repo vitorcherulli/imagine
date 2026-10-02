@@ -3,6 +3,8 @@ import { createId } from "@paralleldrive/cuid2";
 import { db, schema } from "@/lib/db";
 import type { MediaLibraryAsset, MediaLibraryFolder } from "@/lib/db/schema";
 import { mimeFromFilename } from "@/lib/s3";
+import { IMAGE_CHAT_GALLERY_FOLDER, parseImageChatUrls } from "@/lib/image-chat";
+import { ORIGINAL_DIRECTION, VARIATIONS_GALLERY_FOLDER } from "@/lib/variations";
 
 export type MediaLibrarySource =
   | "upload"
@@ -420,6 +422,94 @@ export function registerMediaLibraryAssetSafe(
   void registerMediaLibraryAsset(input).catch((err) => {
     console.warn("[media-library] register failed:", err);
   });
+}
+
+/** Outputs of tools without a project (Image chat, Variations) land in "Geradas por IA › <product>". */
+export function registerGeneratedMediaSafe(input: {
+  userId: string;
+  url: string;
+  name: string;
+  product: string;
+  kind?: "image" | "video";
+}): void {
+  // Serialized so outputs finishing together don't race to create the same folders.
+  generatedQueue = generatedQueue
+    .then(async () => {
+      await ensureDefaultMediaLibraryFolders(input.userId);
+      const root = await getOrCreateRootFolder(input.userId, sourceFolderName("generated"));
+      const folderId = await getOrCreateFolder(input.userId, input.product, root);
+      const kind = input.kind ?? "image";
+      await registerMediaLibraryAsset({
+        userId: input.userId,
+        url: input.url,
+        name: sanitizeFolderName(input.name),
+        mimeType: kind === "video" ? "video/mp4" : "image/png",
+        kind,
+        source: "generated",
+        folderId,
+      });
+    })
+    .catch((err) => {
+      console.warn("[media-library] register generated failed:", err);
+    });
+}
+
+let generatedQueue: Promise<void> = Promise.resolve();
+
+/** Files Image chat / Variations outputs created before they were registered automatically. */
+export async function backfillGeneratedMedia(userId: string): Promise<void> {
+  const [assets, chatImages, variations] = await Promise.all([
+    db
+      .select({ url: schema.mediaLibraryAssets.url })
+      .from(schema.mediaLibraryAssets)
+      .where(eq(schema.mediaLibraryAssets.userId, userId)),
+    db
+      .select({ imageUrls: schema.imageChatMessages.imageUrls, title: schema.imageChats.title })
+      .from(schema.imageChatMessages)
+      .innerJoin(schema.imageChats, eq(schema.imageChatMessages.chatId, schema.imageChats.id))
+      .where(
+        and(
+          eq(schema.imageChatMessages.userId, userId),
+          eq(schema.imageChatMessages.role, "assistant"),
+          eq(schema.imageChatMessages.status, "ready"),
+        ),
+      ),
+    db
+      .select({
+        imageUrl: schema.variationItems.imageUrl,
+        status: schema.variationItems.status,
+        videoUrl: schema.variationItems.videoUrl,
+        videoStatus: schema.variationItems.videoStatus,
+        direction: schema.variationItems.direction,
+        name: schema.variationSets.name,
+      })
+      .from(schema.variationItems)
+      .innerJoin(schema.variationSets, eq(schema.variationItems.setId, schema.variationSets.id))
+      .where(eq(schema.variationItems.userId, userId)),
+  ]);
+  const known = new Set(assets.map((a) => a.url));
+  const missing = (url: string | null): url is string => !!url && !known.has(normalizeUrl(url));
+
+  for (const row of chatImages) {
+    for (const url of parseImageChatUrls(row.imageUrls).filter(missing)) {
+      registerGeneratedMediaSafe({ userId, url, name: row.title, product: IMAGE_CHAT_GALLERY_FOLDER });
+    }
+  }
+  for (const row of variations) {
+    if (row.direction !== ORIGINAL_DIRECTION && row.status === "ready" && missing(row.imageUrl)) {
+      registerGeneratedMediaSafe({ userId, url: row.imageUrl, name: row.name, product: VARIATIONS_GALLERY_FOLDER });
+    }
+    if (row.videoStatus === "ready" && missing(row.videoUrl)) {
+      registerGeneratedMediaSafe({
+        userId,
+        url: row.videoUrl,
+        name: row.name,
+        product: VARIATIONS_GALLERY_FOLDER,
+        kind: "video",
+      });
+    }
+  }
+  await generatedQueue;
 }
 
 export async function moveMediaLibraryAsset(

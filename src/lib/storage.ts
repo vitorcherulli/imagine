@@ -265,6 +265,20 @@ export async function deleteCreativeMedia(userId: string, creativeId: string): P
   await deleteMediaPrefix(path.posix.join("generated", "_creatives", userId, creativeId));
 }
 
+export async function saveImageChatBuffer(
+  userId: string,
+  chatId: string,
+  filename: string,
+  buf: Buffer,
+): Promise<string> {
+  const key = path.posix.join("generated", "_image-chats", userId, chatId, filename);
+  return writeBytes(key, buf);
+}
+
+export async function deleteImageChatMedia(userId: string, chatId: string): Promise<void> {
+  await deleteMediaPrefix(path.posix.join("generated", "_image-chats", userId, chatId));
+}
+
 export async function saveGalleryBuffer(
   userId: string,
   filename: string,

@@ -15,6 +15,7 @@ import {
   Languages,
   LayoutGrid,
   Megaphone,
+  MessagesSquare,
   Mountain,
   UserSquare,
   Wand2,
@@ -250,6 +251,13 @@ export function Sidebar({
               icon={<Wand2 className="h-3.5 w-3.5" />}
             />
             <SidebarNavLink
+              href="/image-chat"
+              title="Image chat — create images by chatting"
+              label="Image chat"
+              active={pathname?.startsWith("/image-chat")}
+              icon={<MessagesSquare className="h-3.5 w-3.5" />}
+            />
+            <SidebarNavLink
               href="/creatives"
               title="Creatives — ad library, naming and results"
               label="Creatives"
@@ -317,6 +325,14 @@ export function Sidebar({
             collapsed
             active={pathname?.startsWith("/variations")}
             icon={<Wand2 className="h-4 w-4" />}
+          />
+          <SidebarNavLink
+            href="/image-chat"
+            title="Image chat"
+            label="Image chat"
+            collapsed
+            active={pathname?.startsWith("/image-chat")}
+            icon={<MessagesSquare className="h-4 w-4" />}
           />
           <SidebarNavLink
             href="/creatives"

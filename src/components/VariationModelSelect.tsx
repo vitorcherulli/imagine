@@ -18,13 +18,20 @@ export function VariationModelSelect({
   value,
   onChange,
   label,
+  usage = "variations",
+  placement = "bottom",
+  compact = false,
 }: {
   kind: CatalogModelKind;
   value: string;
   onChange: (value: string) => void;
   label?: string;
+  usage?: "variations" | "all";
+  placement?: "bottom" | "top";
+  /** Trigger only — no label row or favorite chips (for toolbars). */
+  compact?: boolean;
 }) {
-  const { models, loading } = useModelCatalog(kind);
+  const { models, loading } = useModelCatalog(kind, usage);
   const favorites = useFavoriteModels()[kind];
   const [open, setOpen] = React.useState(false);
   const [query, setQuery] = React.useState("");
@@ -79,7 +86,7 @@ export function VariationModelSelect({
 
   return (
     <div ref={rootRef} className="relative min-w-0 space-y-1">
-      <div className="flex items-center justify-between gap-2">
+      <div className={cn("flex items-center justify-between gap-2", compact && "hidden")}>
         <Label className="flex items-center gap-1 text-2xs text-muted-foreground">
           <Icon className="h-3 w-3" /> {label ?? (kind === "image" ? "Image AI" : "Video AI")}
         </Label>
@@ -100,9 +107,14 @@ export function VariationModelSelect({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex h-8 w-full items-center justify-between gap-2 rounded-md border border-input bg-background px-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-1"
+        className={cn(
+          "flex w-full items-center justify-between gap-2 rounded-md border border-input bg-background px-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-1",
+          compact ? "h-7" : "h-8",
+        )}
+        title={label}
       >
         <span className="flex min-w-0 items-center gap-1.5">
+          {compact ? <Icon className="h-3 w-3 shrink-0 text-muted-foreground" /> : null}
           {isFavorite ? <Star className="h-3 w-3 shrink-0 fill-accent text-accent" /> : null}
           <span className="truncate font-medium">{modelLabel(models, value)}</span>
           {current?.provider ? (
@@ -112,7 +124,7 @@ export function VariationModelSelect({
         <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-60" />
       </button>
 
-      {favoriteModels.length > 0 ? (
+      {favoriteModels.length > 0 && !compact ? (
         <div className="flex flex-wrap gap-1">
           {favoriteModels.map((m) => (
             <button
@@ -134,7 +146,12 @@ export function VariationModelSelect({
       ) : null}
 
       {open ? (
-        <div className="absolute left-0 top-full z-50 mt-1 w-[min(380px,90vw)] overflow-hidden rounded-md border border-border bg-background shadow-lg">
+        <div
+          className={cn(
+            "absolute left-0 z-50 w-[min(380px,90vw)] overflow-hidden rounded-md border border-border bg-background shadow-lg",
+            placement === "top" ? "bottom-full mb-1" : "top-full mt-1",
+          )}
+        >
           <div className="flex items-center gap-1.5 border-b border-border px-2">
             <Search className="h-3.5 w-3.5 text-muted-foreground" />
             <input

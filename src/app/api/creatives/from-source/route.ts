@@ -5,6 +5,7 @@ import { db, schema } from "@/lib/db";
 import { tryUser } from "@/lib/auth";
 import { readMediaBuffer } from "@/lib/storage";
 import { CREATIVE_LANGUAGES, isCreativeFormat } from "@/lib/creatives";
+import { parseImageChatUrls } from "@/lib/image-chat";
 import {
   CREATIVE_MIME_EXT,
   createCreativeFromBuffer,
@@ -16,7 +17,7 @@ import {
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-const SOURCE_TYPES = ["variation", "export", "asset", "dubbing"] as const;
+const SOURCE_TYPES = ["variation", "export", "asset", "dubbing", "image-chat"] as const;
 type SourceType = (typeof SOURCE_TYPES)[number];
 
 type ResolvedMedia = { url: string; name: string; language?: string; mimeType?: string };
@@ -46,6 +47,22 @@ async function resolveMedia(
       .innerJoin(schema.projects, eq(schema.exports.projectId, schema.projects.id))
       .where(and(eq(schema.exports.id, id), eq(schema.projects.userId, userId)));
     return row?.url && row.status === "done" ? { url: row.url, name: row.title } : null;
+  }
+  if (type === "image-chat") {
+    const [messageId, index] = id.split(":");
+    const [row] = await db
+      .select({ imageUrls: schema.imageChatMessages.imageUrls, title: schema.imageChats.title })
+      .from(schema.imageChatMessages)
+      .innerJoin(schema.imageChats, eq(schema.imageChatMessages.chatId, schema.imageChats.id))
+      .where(
+        and(
+          eq(schema.imageChatMessages.id, messageId),
+          eq(schema.imageChatMessages.userId, userId),
+          eq(schema.imageChatMessages.role, "assistant"),
+        ),
+      );
+    const url = row ? parseImageChatUrls(row.imageUrls)[Number(index) || 0] : null;
+    return url ? { url, name: row!.title } : null;
   }
   if (type === "asset") {
     const [row] = await db

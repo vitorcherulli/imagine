@@ -3,12 +3,17 @@ import { auth } from "@clerk/nextjs/server";
 import { db, schema } from "@/lib/db";
 import { Sidebar } from "@/components/Sidebar";
 import { MediaLibraryExplorer } from "@/components/MediaLibraryExplorer";
+import { backfillGeneratedMedia } from "@/lib/media-library-server";
 
 export const dynamic = "force-dynamic";
 
 export default async function GalleryPage() {
   const { userId } = await auth();
   if (!userId) return null;
+
+  await backfillGeneratedMedia(userId).catch((err) => {
+    console.warn("[gallery] backfill failed:", err);
+  });
 
   const [projects, projectDna] = await Promise.all([
     db

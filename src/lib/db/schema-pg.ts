@@ -299,6 +299,33 @@ export const creativeFolders = pgTable("creative_folders", {
   createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
 });
 
+export const imageChats = pgTable("image_chats", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  title: text("title").notNull().default("New chat"),
+  imageModel: text("image_model"),
+  aspectRatio: text("aspect_ratio").notNull().default("1:1"),
+  createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
+});
+
+export const imageChatMessages = pgTable("image_chat_messages", {
+  id: text("id").primaryKey(),
+  chatId: text("chat_id")
+    .notNull()
+    .references(() => imageChats.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull(),
+  role: text("role").notNull(),
+  content: text("content").notNull().default(""),
+  imageUrls: text("image_urls").notNull().default("[]"),
+  status: text("status").notNull().default("ready"),
+  error: text("error"),
+  prompt: text("prompt"),
+  model: text("model"),
+  createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
+});
+
 export const storyBlocks = pgTable("story_blocks", {
   id: text("id").primaryKey(),
   projectId: text("project_id")
@@ -564,6 +591,8 @@ export type Scenario = typeof scenarios.$inferSelect;
 export type NewScenario = typeof scenarios.$inferInsert;
 export type VariationSet = typeof variationSets.$inferSelect;
 export type VariationItem = typeof variationItems.$inferSelect;
+export type ImageChat = typeof imageChats.$inferSelect;
+export type ImageChatMessage = typeof imageChatMessages.$inferSelect;
 export type DubbingSource = typeof dubbingSources.$inferSelect;
 export type NewDubbingSource = typeof dubbingSources.$inferInsert;
 export type DubbingSegment = typeof dubbingSegments.$inferSelect;

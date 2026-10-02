@@ -396,6 +396,41 @@ export const creativeFolders = sqliteTable("creative_folders", {
     .default(sql`(unixepoch())`),
 });
 
+export const imageChats = sqliteTable("image_chats", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  title: text("title").notNull().default("New chat"),
+  imageModel: text("image_model"),
+  aspectRatio: text("aspect_ratio").notNull().default("1:1"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+export const imageChatMessages = sqliteTable("image_chat_messages", {
+  id: text("id").primaryKey(),
+  chatId: text("chat_id")
+    .notNull()
+    .references(() => imageChats.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull(),
+  role: text("role").notNull(),
+  content: text("content").notNull().default(""),
+  imageUrls: text("image_urls").notNull().default("[]"),
+  status: text("status").notNull().default("ready"),
+  error: text("error"),
+  prompt: text("prompt"),
+  model: text("model"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
 export const storyBlocks = sqliteTable("story_blocks", {
   id: text("id").primaryKey(),
   projectId: text("project_id")
@@ -713,6 +748,8 @@ export type Scenario = typeof scenarios.$inferSelect;
 export type NewScenario = typeof scenarios.$inferInsert;
 export type VariationSet = typeof variationSets.$inferSelect;
 export type VariationItem = typeof variationItems.$inferSelect;
+export type ImageChat = typeof imageChats.$inferSelect;
+export type ImageChatMessage = typeof imageChatMessages.$inferSelect;
 export type DubbingSource = typeof dubbingSources.$inferSelect;
 export type NewDubbingSource = typeof dubbingSources.$inferInsert;
 export type DubbingSegment = typeof dubbingSegments.$inferSelect;

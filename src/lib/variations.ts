@@ -14,6 +14,7 @@ export const VARIATION_COUNTS = [1, 2, 4, 6] as const;
 export const MAX_VARIATIONS_PER_REQUEST = 6;
 
 export const ORIGINAL_DIRECTION = "original";
+export const VARIATIONS_GALLERY_FOLDER = "Variations";
 
 export const VARIATION_TEXT_MODES = ["keep", "rewrite", "custom"] as const;
 export type VariationTextMode = (typeof VARIATION_TEXT_MODES)[number];

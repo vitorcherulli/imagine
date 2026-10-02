@@ -6,14 +6,14 @@ import { generateImage } from "@/lib/openrouter/images";
 import { OPENROUTER_MODELS, openRouterHeaders } from "@/lib/openrouter/client";
 import { submitVideo, waitForVideo } from "@/lib/openrouter/videos";
 import { pickVideoRequestDuration } from "@/lib/ffmpeg";
-import { IMAGE_MODEL_OPTIONS } from "@/lib/project-api-models";
 import {
   closestSupportedAspect,
   closestSupportedDuration,
-  preferredImageResolution,
   preferredVideoResolution,
 } from "@/lib/model-catalog";
+import { catalogImageParams, imageResultToBuffer } from "@/lib/image-model-params";
 import { getCatalogModel } from "@/lib/model-catalog-server";
+import { registerGeneratedMediaSafe } from "@/lib/media-library-server";
 import {
   deleteMediaByPublicUrl,
   readImageAsDataUrl,
@@ -26,6 +26,7 @@ import {
   isVariationVideoModel,
   normalizeVariationTextMode,
   ORIGINAL_DIRECTION,
+  VARIATIONS_GALLERY_FOLDER,
   VARIATION_DIRECTIONS,
 } from "@/lib/variations";
 import { chatCompletion, extractJson } from "@/lib/openrouter/llm";
@@ -180,31 +181,6 @@ async function writeVariationHeadlines(
   return Array.from({ length: count }, (_, i) => headlines[i % headlines.length]);
 }
 
-async function imageResultToBuffer(img: { b64?: string | null; url?: string | null }): Promise<Buffer> {
-  if (img.b64) return Buffer.from(img.b64, "base64");
-  if (img.url) {
-    const res = await fetch(img.url);
-    if (!res.ok) throw new Error("Could not download generated image.");
-    return Buffer.from(await res.arrayBuffer());
-  }
-  throw new Error("No image data in response.");
-}
-
-/** Built-in models keep their tuned sizing; new catalog models use the parameters they advertise. */
-async function catalogImageParams(model: string, aspectRatio: string) {
-  if (IMAGE_MODEL_OPTIONS.some((o) => o.value === model)) return { aspectRatio };
-  const info = await getCatalogModel("image", model);
-  if (!info) return { aspectRatio, forceDedicatedApi: true };
-  if (info.maxReferences === 0) {
-    throw new Error(`${info.label} can't use a reference image — pick another image AI.`);
-  }
-  return {
-    aspectRatio: closestSupportedAspect(aspectRatio, info.aspectRatios),
-    resolution: preferredImageResolution(info.resolutions),
-    forceDedicatedApi: true,
-  };
-}
-
 async function runVariationImage(set: VariationSet, item: VariationItem): Promise<void> {
   try {
     const model = isVariationImageModel(item.imageModel)
@@ -218,7 +194,7 @@ async function runVariationImage(set: VariationSet, item: VariationItem): Promis
         item.headline,
       ),
       model,
-      ...(await catalogImageParams(model, set.aspectRatio)),
+      ...(await catalogImageParams(model, set.aspectRatio, { withReferences: true })),
       referenceImages: [reference],
       referenceImagesFirst: true,
     });
@@ -230,6 +206,7 @@ async function runVariationImage(set: VariationSet, item: VariationItem): Promis
       .update(schema.variationItems)
       .set({ imageUrl, status: "ready", error: null, updatedAt: new Date() })
       .where(eq(schema.variationItems.id, item.id));
+    registerGeneratedMediaSafe({ userId: set.userId, url: imageUrl, name: set.name, product: VARIATIONS_GALLERY_FOLDER });
   } catch (err) {
     console.error(`[variations] image ${item.id} failed`, err);
     await db
@@ -401,6 +378,13 @@ async function runVariationVideo(
       .update(schema.variationItems)
       .set({ videoUrl, videoStatus: "ready", videoError: null, updatedAt: new Date() })
       .where(eq(schema.variationItems.id, item.id));
+    registerGeneratedMediaSafe({
+      userId: set.userId,
+      url: videoUrl,
+      name: set.name,
+      product: VARIATIONS_GALLERY_FOLDER,
+      kind: "video",
+    });
   } catch (err) {
     console.error(`[variations] video ${item.id} failed`, err);
     await db
