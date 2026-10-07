@@ -1290,7 +1290,7 @@ export async function concatBlocksWithAudio(opts: {
     if (hasMusic2) {
       args.push("-i", musicPath!);
     } else {
-      args.push("-stream_loop", "-1", "-i", musicPath!);
+    args.push("-stream_loop", "-1", "-i", musicPath!);
     }
     nextInput += 1;
   }
@@ -1322,9 +1322,9 @@ export async function concatBlocksWithAudio(opts: {
     const dur = safeSegmentDurationSeconds(seg.durationSeconds);
     const narrationGain = sanitizeGain(
       effectiveNarrationGain({
-        blockVolume: seg.audioVolume,
-        trackVolume: narrationVolume,
-        masterVolume,
+      blockVolume: seg.audioVolume,
+      trackVolume: narrationVolume,
+      masterVolume,
       }),
     );
     const audioStart = Math.max(0, seg.audioTrimStart ?? 0);
@@ -1339,9 +1339,9 @@ export async function concatBlocksWithAudio(opts: {
     if (sceneIdx !== undefined) {
       const gain = sanitizeGain(
         effectiveSceneGain({
-          blockVolume: seg.sceneAudioVolume,
-          trackVolume: sceneVolume,
-          masterVolume,
+        blockVolume: seg.sceneAudioVolume,
+        trackVolume: sceneVolume,
+        masterVolume,
         }),
       );
       filterParts.push(
@@ -2445,7 +2445,8 @@ export type PreparedSwapVideo = {
 
 /**
  * Normalize an uploaded clip for video-to-video models: H.264/AAC MP4, long side ≤ 1280,
- * ≤ 30 fps, at most `maxSeconds` long. Small enough for providers with a 16 MB input cap.
+ * ≤ 30 fps, at most `maxSeconds` long. About 15 MB per 30 s, so a single ≤ 30 s clip fits
+ * providers with a 16 MB input cap.
  */
 export async function prepareSwapSourceVideo(input: {
   buffer: Buffer;
@@ -2492,7 +2493,8 @@ export async function prepareSwapSourceVideo(input: {
       return fs.readFile(outPath);
     };
     let video = await encode(23);
-    if (video.length > 15 * 1024 * 1024) video = await encode(30);
+    const encodedSeconds = await getMediaDurationSeconds(outPath).catch(() => 0);
+    if (video.length > 15 * 1024 * 1024 * Math.max(1, encodedSeconds / 30)) video = await encode(30);
 
     let audio: Buffer | null = null;
     if (hasAudio) {
@@ -2614,4 +2616,130 @@ export async function coverImageBufferToSize(buffer: Buffer, width: number, heig
   } finally {
     await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+async function withSwapTmp<T>(label: string, fn: (dir: string) => Promise<T>): Promise<T> {
+  const dir = path.join(os.tmpdir(), label, `${Date.now()}_${Math.random().toString(36).slice(2)}`);
+  await fs.mkdir(dir, { recursive: true });
+  try {
+    return await fn(dir);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/** Pixel size of an in-memory video. */
+export async function probeVideoBufferSize(buffer: Buffer): Promise<{ width: number; height: number } | null> {
+  return withSwapTmp("imagine-swap-probe", async (dir) => {
+    const inPath = path.join(dir, "in.mp4");
+    await fs.writeFile(inPath, buffer);
+    return probeVideoSize(inPath);
+  });
+}
+
+/** Frame-exact, silent piece of an MP4, kept under the 16 MB input cap of video editors. */
+export async function cutVideoSegment(buffer: Buffer, startSeconds: number, seconds: number): Promise<Buffer> {
+  if (!hasFfmpeg()) throw new Error("ffmpeg is required to split the video");
+  return withSwapTmp("imagine-swap-cut", async (dir) => {
+    const inPath = path.join(dir, "in.mp4");
+    const outPath = path.join(dir, "out.mp4");
+    await fs.writeFile(inPath, buffer);
+    const encode = async (crf: number) => {
+      await runFfmpeg([
+        "-y",
+        "-ss",
+        startSeconds.toFixed(3),
+        "-i",
+        inPath,
+        "-t",
+        seconds.toFixed(3),
+        "-an",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        String(crf),
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        outPath,
+      ]);
+      return fs.readFile(outPath);
+    };
+    const out = await encode(23);
+    return out.length > 15 * 1024 * 1024 ? encode(30) : out;
+  });
+}
+
+/**
+ * Re-time a rendered piece to exactly `seconds` (cut, or hold the last frame) at
+ * `width`×`height`, 30 fps, no audio — so pieces join without drifting from the soundtrack.
+ */
+export async function conformVideoSegment(
+  buffer: Buffer,
+  seconds: number,
+  width: number,
+  height: number,
+): Promise<Buffer> {
+  if (!hasFfmpeg()) throw new Error("ffmpeg is required to join the video");
+  return withSwapTmp("imagine-swap-conform", async (dir) => {
+    const inPath = path.join(dir, "in.mp4");
+    const outPath = path.join(dir, "out.mp4");
+    await fs.writeFile(inPath, buffer);
+    await runFfmpeg([
+      "-y",
+      "-i",
+      inPath,
+      "-vf",
+      `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},setsar=1,` +
+        "fps=30,tpad=stop_mode=clone:stop_duration=5,format=yuv420p",
+      "-t",
+      seconds.toFixed(3),
+      "-an",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-crf",
+      "18",
+      "-movflags",
+      "+faststart",
+      outPath,
+    ]);
+    return fs.readFile(outPath);
+  });
+}
+
+/** Join MP4 pieces with identical encoding (see conformVideoSegment) end to end. */
+export async function concatVideoBuffers(buffers: Buffer[]): Promise<Buffer> {
+  if (buffers.length === 1) return buffers[0]!;
+  if (!hasFfmpeg()) throw new Error("ffmpeg is required to join the video");
+  return withSwapTmp("imagine-swap-concat", async (dir) => {
+    const names: string[] = [];
+    for (const [i, buf] of buffers.entries()) {
+      const name = `part-${i}.mp4`;
+      await fs.writeFile(path.join(dir, name), buf);
+      names.push(`file '${name}'`);
+    }
+    const listPath = path.join(dir, "list.txt");
+    const outPath = path.join(dir, "out.mp4");
+    await fs.writeFile(listPath, names.join("\n"));
+    await runFfmpeg([
+      "-y",
+      "-f",
+      "concat",
+      "-safe",
+      "0",
+      "-i",
+      listPath,
+      "-c",
+      "copy",
+      "-movflags",
+      "+faststart",
+      outPath,
+    ]);
+    return fs.readFile(outPath);
+  });
 }

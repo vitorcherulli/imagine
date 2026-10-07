@@ -256,7 +256,7 @@ function CharacterChoiceCircles({
   disabled?: boolean;
   onChange: (next: string) => void;
 }) {
-  const projectAvatar = projectAvatarId
+    const projectAvatar = projectAvatarId
     ? avatars.find((a) => a.id === projectAvatarId) ?? null
     : null;
 
@@ -369,7 +369,7 @@ export type BlockProcessStatus = {
 export function getBlockProcessStatus(block: Block | null): BlockProcessStatus | null {
   if (!block) return null;
   if (block.status === "error") {
-    return {
+  return {
       kind: "error",
       message: block.errorMessage ?? "Generation failed",
       shortLabel: "Error",
@@ -474,7 +474,7 @@ function BlockPanelCollapsedRail({
             {section.indicator === "error" ? (
               <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-destructive ring-1 ring-background" />
             ) : null}
-          </button>
+    </button>
         );
       })}
     </div>
@@ -926,7 +926,7 @@ export function BlockDetailPanel({
     (inSpeechNarrationGroup || joinNarrationTargets.length > 0 || canLeaveSpeechNarration);
 
   React.useEffect(() => {
-    if (!block) {
+  if (!block) {
       setActiveRailSection(null);
       return;
     }
@@ -1312,10 +1312,10 @@ export function BlockDetailPanel({
   async function autoSaveBlockFields() {
     if (!block) return;
     const fields = {
-      narrativeText,
-      visualPrompt,
-      durationSeconds,
-      segmentType,
+          narrativeText,
+          visualPrompt,
+          durationSeconds,
+          segmentType,
     };
     const isDirty =
       fields.narrativeText !== block.narrativeText ||
@@ -1981,7 +1981,7 @@ export function BlockDetailPanel({
                 disabled={savingScenario}
                 onChange={saveScenarioChoice}
               />
-            </div>
+                </div>
           ) : null}
           <div className="mt-2 space-y-2 border-t border-border/60 pt-2">
             <Label className="mb-0.5 flex items-center gap-1 text-[10px]">
@@ -2068,11 +2068,11 @@ export function BlockDetailPanel({
                   {target.adjacent ? "Rejoin narration" : "Move & join narration"}
                   <span className="mt-0.5 block text-[10px] font-normal leading-snug text-muted-foreground">
                     {target.label}
-                  </span>
+                    </span>
                 </span>
               </Button>
-            ))}
-          </BlockPanelSection>
+                ))}
+        </BlockPanelSection>
         ) : null}
 
         {showSection("content") ? (
@@ -2108,23 +2108,23 @@ export function BlockDetailPanel({
             </>
           ) : (
             <>
-              <CollapsibleTextField
-                label="Narration"
+          <CollapsibleTextField
+            label="Narration"
                 storageKey="block-detail:narration-field"
-                value={narrativeText}
-                onChange={setNarrativeText}
+            value={narrativeText}
+            onChange={setNarrativeText}
                 minHeight="min-h-[140px]"
                 textareaClassName={BLOCK_NARRATION_TEXTAREA}
-              />
-              <CollapsibleTextField
-                label="Visual prompt"
+          />
+          <CollapsibleTextField
+            label="Visual prompt"
                 storageKey="block-detail:visual-field"
-                value={visualPrompt}
-                onChange={setVisualPrompt}
+            value={visualPrompt}
+            onChange={setVisualPrompt}
                 minHeight="min-h-[100px]"
                 textareaClassName={BLOCK_VISUAL_TEXTAREA}
                 className="mt-3"
-              />
+          />
             </>
           )}
         </BlockPanelSection>
@@ -2478,8 +2478,8 @@ export function BlockDetailPanel({
             activeSectionId={activeRailSection}
             onOpenSection={toggleRailSection}
           />
-        </div>
-      </aside>
+      </div>
+    </aside>
       <MediaLibraryPickerDialog
         open={galleryOpen}
         onOpenChange={setGalleryOpen}
@@ -2649,7 +2649,7 @@ function BlockPanelSection({
   }
 
   if (flyout) {
-    return (
+  return (
       <div ref={rootRef} className="space-y-1.5">
         {headerAddon}
         <div>{children}</div>
@@ -2941,17 +2941,17 @@ function MediaRow({
               <Trash2 className="h-2.5 w-2.5" />
             </Button>
           ) : null}
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="h-5 w-5"
-            onClick={onRegen}
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="h-5 w-5"
+          onClick={onRegen}
             disabled={regenDisabled}
-            title={regenLabel ?? `Regenerate ${label}`}
-          >
-            <RefreshCw className="h-2.5 w-2.5" />
-          </Button>
-        </div>
+          title={regenLabel ?? `Regenerate ${label}`}
+        >
+          <RefreshCw className="h-2.5 w-2.5" />
+        </Button>
+      </div>
       </div>
       {url && kind === "image" && !previewBroken && (
         <div className="relative mt-1 overflow-hidden rounded">

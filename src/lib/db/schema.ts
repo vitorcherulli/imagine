@@ -303,6 +303,52 @@ export const variationItems = sqliteTable("variation_items", {
     .default(sql`(unixepoch())`),
 });
 
+/** Batch edit: many photos edited by the image AI with one instruction. */
+export const photoBatches = sqliteTable("photo_batches", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  folderId: text("folder_id"),
+  name: text("name").notNull(),
+  instructions: text("instructions"),
+  imageModel: text("image_model"),
+  /** "original" keeps each photo's own proportions. */
+  aspectRatio: text("aspect_ratio").notNull().default("original"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+export const photoBatchItems = sqliteTable("photo_batch_items", {
+  id: text("id").primaryKey(),
+  batchId: text("batch_id")
+    .notNull()
+    .references(() => photoBatches.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull(),
+  position: integer("position").notNull().default(0),
+  originalName: text("original_name").notNull().default(""),
+  sourceUrl: text("source_url").notNull(),
+  width: integer("width"),
+  height: integer("height"),
+  /** idle | queued | editing | ready | error */
+  status: text("status").notNull().default("idle"),
+  resultUrl: text("result_url"),
+  error: text("error"),
+  imageModel: text("image_model"),
+  /** Instruction used for the current/last edit. */
+  instructions: text("instructions"),
+  approved: integer("approved", { mode: "boolean" }).notNull().default(false),
+  attempts: integer("attempts").notNull().default(0),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
 /** One file of an ad creative. Pieces sharing `code` are the same concept (hook). */
 export const creatives = sqliteTable("creatives", {
   id: text("id").primaryKey(),
@@ -479,6 +525,8 @@ export const personSwapItems = sqliteTable("person_swap_items", {
   /** First frame with the new person — guides the video model. */
   keyframeUrl: text("keyframe_url"),
   /** Video as returned by the model, before our audio pass. */
+  /** JSON SwapSegment[] — set when the video is rendered in parts (longer than the AI accepts). */
+  segments: text("segments"),
   rawVideoUrl: text("raw_video_url"),
   videoUrl: text("video_url"),
   /** Voice applied to videoUrl; null = original voice. */
@@ -812,6 +860,8 @@ export type Scenario = typeof scenarios.$inferSelect;
 export type NewScenario = typeof scenarios.$inferInsert;
 export type VariationSet = typeof variationSets.$inferSelect;
 export type VariationItem = typeof variationItems.$inferSelect;
+export type PhotoBatch = typeof photoBatches.$inferSelect;
+export type PhotoBatchItem = typeof photoBatchItems.$inferSelect;
 export type ImageChat = typeof imageChats.$inferSelect;
 export type ImageChatMessage = typeof imageChatMessages.$inferSelect;
 export type PersonSwap = typeof personSwaps.$inferSelect;

@@ -2,8 +2,8 @@ export const PERSON_SWAP_GALLERY_FOLDER = "Person swap";
 
 export const DEFAULT_SWAP_IMAGE_MODEL = "google/gemini-3.1-flash-image-preview";
 
-/** Longest clip we keep from an upload; each model may cut it shorter. */
-export const PERSON_SWAP_MAX_SECONDS = 30;
+/** Longest clip we keep from an upload; longer than the video AI accepts is rendered in parts. */
+export const PERSON_SWAP_MAX_SECONDS = 120;
 export const PERSON_SWAP_MIN_SECONDS = 2;
 export const PERSON_SWAP_MAX_UPLOAD_BYTES = 300 * 1024 * 1024;
 export const PERSON_SWAP_MAX_PEOPLE = 6;
@@ -55,4 +55,51 @@ export function parseUrlList(raw: string | null | undefined): string[] {
   } catch {
     return [];
   }
+}
+
+/** One part of a video rendered in pieces. */
+export type SwapSegment = {
+  start: number;
+  seconds: number;
+  keyframeUrl: string | null;
+  rawVideoUrl: string | null;
+};
+
+export function parseSwapSegments(raw: string | null | undefined): SwapSegment[] {
+  try {
+    const arr = JSON.parse(raw || "[]");
+    if (!Array.isArray(arr)) return [];
+    return arr
+      .filter((s) => s && typeof s.start === "number" && typeof s.seconds === "number")
+      .map((s) => ({
+        start: s.start,
+        seconds: s.seconds,
+        keyframeUrl: typeof s.keyframeUrl === "string" ? s.keyframeUrl : null,
+        rawVideoUrl: typeof s.rawVideoUrl === "string" ? s.rawVideoUrl : null,
+      }));
+  } catch {
+    return [];
+  }
+}
+
+/** Overshoot that is cut off instead of costing an extra part. */
+const SEGMENT_SLACK_SECONDS = 0.5;
+
+/**
+ * Even parts of at most `maxSeconds` (whole seconds except the last), so no part is
+ * too short for the video AI.
+ */
+export function planSwapSegments(
+  durationSeconds: number,
+  maxSeconds: number,
+): Array<{ start: number; seconds: number }> {
+  if (durationSeconds <= maxSeconds + SEGMENT_SLACK_SECONDS) {
+    return [{ start: 0, seconds: Math.min(durationSeconds, maxSeconds) }];
+  }
+  const count = Math.ceil(durationSeconds / maxSeconds);
+  const piece = Math.ceil(durationSeconds / count);
+  return Array.from({ length: count }, (_, i) => ({
+    start: i * piece,
+    seconds: i === count - 1 ? durationSeconds - piece * (count - 1) : piece,
+  }));
 }

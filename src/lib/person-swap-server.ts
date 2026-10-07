@@ -8,12 +8,15 @@ import { submitVideoWithCapacityRetry, type VideoReferenceInput } from "@/lib/op
 import { chatCompletion } from "@/lib/openrouter/llm";
 import { convertSpeechToVoice } from "@/lib/elevenlabs/speech-to-speech";
 import {
+  concatVideoBuffers,
+  conformVideoSegment,
   coverImageBufferToSize,
+  cutVideoSegment,
   extractFirstFrameFromVideoBuffer,
   muxDubbedAudioOntoVideo,
   prepareSwapSourceVideo,
+  probeVideoBufferSize,
   readImagePixelSize,
-  trimVideoBuffer,
 } from "@/lib/ffmpeg";
 import {
   closestSupportedAspect,
@@ -42,13 +45,16 @@ import {
 import {
   aspectRatioFor,
   DEFAULT_SWAP_IMAGE_MODEL,
+  parseSwapSegments,
   parseUrlList,
+  planSwapSegments,
   PERSON_SWAP_GALLERY_FOLDER,
   PERSON_SWAP_MAX_SECONDS,
   PERSON_SWAP_MIN_SECONDS,
   PUBLIC_MEDIA_REQUIRED,
   type PersonSwapMode,
   type PersonSwapVoiceMode,
+  type SwapSegment,
 } from "@/lib/person-swap";
 
 const FRAME_STALE_MS = 15 * 60 * 1000;
@@ -325,10 +331,14 @@ function buildKeyframePrompt(
   item: PersonSwapItem,
   scenario: Scenario | null,
   refCount: number,
+  withAnchor: boolean,
 ): string {
   return [
     "Image 1 is a frame from a video.",
     `Images 2 to ${refCount + 1} are photos of ${item.avatarName || "a person"}.`,
+    withAnchor
+      ? "The last image is this same person already recast in an earlier moment of the same video — match that face, hair, skin, body and clothing exactly."
+      : "",
     "Recreate image 1 with the person replaced by the person from the photos: their face, hair, skin tone and body type must match the photos exactly.",
     "KEEP from image 1: the exact pose, gesture, head angle, expression, mouth position, camera angle, framing, lens, lighting and any objects held.",
     scenario
@@ -388,11 +398,19 @@ async function describePerson(referenceUrl: string, name: string): Promise<strin
   return raw.trim().replace(/\s+/g, " ").slice(0, 400) || name;
 }
 
-async function makeKeyframe(swap: PersonSwap, item: PersonSwapItem, scenario: Scenario | null): Promise<string> {
+/** First frame of `clip` with the new person. `anchorUrl` = an earlier part's keyframe, for consistency. */
+async function makeKeyframe(
+  swap: PersonSwap,
+  item: PersonSwapItem,
+  scenario: Scenario | null,
+  clip: Buffer,
+  filename: string,
+  anchorUrl: string | null = null,
+): Promise<string> {
   const { imageModel } = resolveSwapModels(swap);
   const people = parseUrlList(item.referenceUrls).slice(0, 3);
   if (people.length === 0) throw new Error("This person has no photos.");
-  const frame = await extractFirstFrameFromVideoBuffer(await readMediaBuffer(swap.sourceUrl));
+  const frame = await extractFirstFrameFromVideoBuffer(clip);
   const frameUrl = `data:image/jpeg;base64,${frame.toString("base64")}`;
   const personRefs = await Promise.all(people.map((u) => readMediaForProvider(u, "image/jpeg")));
   const sceneRefs = scenario
@@ -402,17 +420,18 @@ async function makeKeyframe(swap: PersonSwap, item: PersonSwapItem, scenario: Sc
           .map((u) => readMediaForProvider(u, "image/jpeg")),
       )
     : [];
+  const anchor = anchorUrl ? [await readMediaForProvider(anchorUrl, "image/jpeg")] : [];
   const img = await generateImage({
-    prompt: buildKeyframePrompt(swap, item, scenario, personRefs.length),
+    prompt: buildKeyframePrompt(swap, item, scenario, personRefs.length, anchor.length > 0),
     model: imageModel,
     ...(await catalogImageParams(imageModel, swap.aspectRatio, { withReferences: true })),
-    referenceImages: [frameUrl, ...personRefs, ...sceneRefs],
+    referenceImages: [frameUrl, ...personRefs, ...sceneRefs, ...anchor],
     referenceImagesFirst: true,
   });
   const size = readImagePixelSize(frame);
   const raw = await imageResultToBuffer(img);
   const buffer = size ? await coverImageBufferToSize(raw, size.width, size.height) : raw;
-  return withCacheBuster(await savePersonSwapBuffer(swap.userId, swap.id, `${item.id}-frame.jpg`, buffer));
+  return withCacheBuster(await savePersonSwapBuffer(swap.userId, swap.id, filename, buffer));
 }
 
 /** Video references must be downloadable over https — inline data is rejected. */
@@ -422,29 +441,22 @@ async function providerVideoUrl(url: string): Promise<string> {
   throw new Error(PUBLIC_MEDIA_REQUIRED);
 }
 
-/** Source clip cut to what the model accepts (cached per length). */
-async function sourceForModel(swap: PersonSwap, info: CatalogModel): Promise<{ url: string; seconds: number }> {
-  const max = swapMaxSeconds(info);
-  if (swap.durationSeconds <= max + 0.05) return { url: swap.sourceUrl, seconds: swap.durationSeconds };
-  const trimmed = await trimVideoBuffer(await readMediaBuffer(swap.sourceUrl), max);
-  const url = await savePersonSwapBuffer(swap.userId, swap.id, `source-${max}s.mp4`, trimmed);
-  return { url, seconds: max };
-}
+type RenderPart = { sourceUrl: string; seconds: number; keyframeUrl: string | null; filename: string };
 
 async function renderVideo(
   swap: PersonSwap,
   item: PersonSwapItem,
   scenario: Scenario | null,
   model: string,
+  info: CatalogModel,
+  source: RenderPart,
 ): Promise<string> {
-  const info = await videoModelInfo(model);
-  const source = await sourceForModel(swap, info);
   const withRefs = swapAcceptsReferences(model);
-  const refs: VideoReferenceInput[] = [{ kind: "video", url: await providerVideoUrl(source.url) }];
+  const refs: VideoReferenceInput[] = [{ kind: "video", url: await providerVideoUrl(source.sourceUrl) }];
   const isSeedance = /seedance/i.test(model);
   const isRunway = model.startsWith("runway/");
   const keyframe =
-    withRefs && item.keyframeUrl ? await readMediaForProvider(item.keyframeUrl, "image/jpeg") : null;
+    withRefs && source.keyframeUrl ? await readMediaForProvider(source.keyframeUrl, "image/jpeg") : null;
   // Runway takes guidance images only as timed keyframes; other editors take image references.
   if (keyframe && !isRunway) refs.push({ kind: "image", url: keyframe });
   if (withRefs && isSeedance) {
@@ -467,7 +479,7 @@ async function renderVideo(
   const videoInput = {
     model,
     prompt: buildVideoPrompt(swap, item, scenario, {
-      withKeyframe: withRefs && !!item.keyframeUrl,
+      withKeyframe: !!keyframe,
       personDescription,
     }),
     input_references: refs,
@@ -486,7 +498,104 @@ async function renderVideo(
   if (!res.ok) throw new Error(`Video download failed (${res.status})`);
   const buf = Buffer.from(await res.arrayBuffer());
   if (buf.length < 1024) throw new Error("Downloaded video is empty");
-  return withCacheBuster(await savePersonSwapBuffer(swap.userId, swap.id, `${item.id}-raw.mp4`, buf));
+  return withCacheBuster(await savePersonSwapBuffer(swap.userId, swap.id, source.filename, buf));
+}
+
+const PARALLEL_PARTS = 3;
+
+function sameSegmentPlan(a: SwapSegment[], b: Array<{ start: number; seconds: number }>): boolean {
+  return (
+    a.length === b.length &&
+    a.every((s, i) => Math.abs(s.start - b[i]!.start) < 0.01 && Math.abs(s.seconds - b[i]!.seconds) < 0.01)
+  );
+}
+
+/**
+ * Videos longer than the AI accepts: each part gets its own keyframe (guided by the first
+ * part's, so the person matches), renders separately, and is re-timed and joined.
+ * `resume` keeps parts that already rendered (after a failure).
+ */
+async function renderInParts(
+  swap: PersonSwap,
+  item: PersonSwapItem,
+  scenario: Scenario | null,
+  model: string,
+  info: CatalogModel,
+  plan: Array<{ start: number; seconds: number }>,
+  opts: { newFrame: boolean; resume: boolean },
+): Promise<string> {
+  const previous = parseSwapSegments(item.segments);
+  const keep = sameSegmentPlan(previous, plan);
+  const segments: SwapSegment[] = plan.map((p, i) => ({
+    ...p,
+    keyframeUrl: opts.newFrame ? null : keep ? previous[i]!.keyframeUrl : i === 0 ? item.keyframeUrl : null,
+    rawVideoUrl: keep && !opts.newFrame && opts.resume ? previous[i]!.rawVideoUrl : null,
+  }));
+  const save = (patch: Partial<typeof schema.personSwapItems.$inferInsert> = {}) =>
+    setItem(item.id, { segments: JSON.stringify(segments), ...patch });
+  const total = plan.length;
+  const source = await readMediaBuffer(swap.sourceUrl);
+  const clips = await Promise.all(plan.map((p) => cutVideoSegment(source, p.start, p.seconds)));
+
+  if (swapAcceptsReferences(model) && segments.some((s) => !s.keyframeUrl)) {
+    await save({ status: "frame", error: null });
+    const first = segments[0]!;
+    first.keyframeUrl ??= await makeKeyframe(swap, item, scenario, clips[0]!, `${item.id}-frame-1.jpg`);
+    await save({ keyframeUrl: first.keyframeUrl });
+    await Promise.all(
+      segments.map(async (s, i) => {
+        if (s.keyframeUrl) return;
+        s.keyframeUrl = await makeKeyframe(
+          swap,
+          item,
+          scenario,
+          clips[i]!,
+          `${item.id}-frame-${i + 1}.jpg`,
+          first.keyframeUrl,
+        );
+      }),
+    );
+  }
+  await save({ status: "video", error: null, videoModel: model, keyframeUrl: segments[0]!.keyframeUrl });
+
+  const pending = segments.map((s, i) => ({ s, i })).filter(({ s }) => !s.rawVideoUrl);
+  let failure: unknown = null;
+  const worker = async () => {
+    for (let next = pending.shift(); next && !failure; next = pending.shift()) {
+      const { s, i } = next;
+      try {
+        const sourceUrl = await savePersonSwapBuffer(
+          swap.userId,
+          swap.id,
+          `source-part-${i + 1}-of-${total}.mp4`,
+          clips[i]!,
+        );
+        s.rawVideoUrl = await renderVideo(swap, item, scenario, model, info, {
+          sourceUrl,
+          seconds: s.seconds,
+          keyframeUrl: s.keyframeUrl,
+          filename: `${item.id}-raw-${i + 1}.mp4`,
+        });
+        await save();
+      } catch (err) {
+        failure ??= new Error(`Part ${i + 1} of ${total}: ${errorMessage(err)}`);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(PARALLEL_PARTS, pending.length) }, worker));
+  if (failure) throw failure;
+
+  const parts = await Promise.all(segments.map((s) => readMediaBuffer(s.rawVideoUrl!)));
+  const size = (await probeVideoBufferSize(parts[0]!)) ?? readImagePixelSize(
+    await extractFirstFrameFromVideoBuffer(parts[0]!),
+  );
+  if (!size) throw new Error("Could not read the rendered video size.");
+  const conformed: Buffer[] = [];
+  for (const [i, part] of parts.entries()) {
+    conformed.push(await conformVideoSegment(part, segments[i]!.seconds, size.width, size.height));
+  }
+  const joined = await concatVideoBuffers(conformed);
+  return withCacheBuster(await savePersonSwapBuffer(swap.userId, swap.id, `${item.id}-raw.mp4`, joined));
 }
 
 const voiceTracks = new Map<string, Promise<string>>();
@@ -550,20 +659,51 @@ async function finishItem(
 async function runSwapItem(
   swap: PersonSwap,
   item: PersonSwapItem,
-  opts: { newFrame: boolean },
+  opts: { newFrame: boolean; resume?: boolean },
 ): Promise<void> {
   try {
     const scenario = await loadScenario(swap);
     const model = isModelId(item.videoModel) ? item.videoModel : resolveSwapModels(swap).videoModel;
+    const info = await videoModelInfo(model);
+    const plan = planSwapSegments(swap.durationSeconds, swapMaxSeconds(info));
     let current = item;
-    if (swapAcceptsReferences(model) && (opts.newFrame || !item.keyframeUrl)) {
-      await setItem(item.id, { status: "frame", error: null });
-      const keyframeUrl = await makeKeyframe(swap, item, scenario);
-      await setItem(item.id, { keyframeUrl });
-      current = { ...current, keyframeUrl };
+    let rawVideoUrl: string;
+    if (plan.length > 1) {
+      rawVideoUrl = await renderInParts(swap, item, scenario, model, info, plan, {
+        newFrame: opts.newFrame,
+        resume: !!opts.resume,
+      });
+    } else {
+      if (swapAcceptsReferences(model) && (opts.newFrame || !item.keyframeUrl)) {
+        await setItem(item.id, { status: "frame", error: null });
+        const keyframeUrl = await makeKeyframe(
+          swap,
+          item,
+          scenario,
+          await readMediaBuffer(swap.sourceUrl),
+          `${item.id}-frame.jpg`,
+        );
+        await setItem(item.id, { keyframeUrl });
+        current = { ...current, keyframeUrl };
+      }
+      await setItem(item.id, { status: "video", error: null, videoModel: model, segments: null });
+      const { seconds } = plan[0]!;
+      const sourceUrl =
+        seconds < swap.durationSeconds - 0.01
+          ? await savePersonSwapBuffer(
+              swap.userId,
+              swap.id,
+              `source-${seconds}s.mp4`,
+              await cutVideoSegment(await readMediaBuffer(swap.sourceUrl), 0, seconds),
+            )
+          : swap.sourceUrl;
+      rawVideoUrl = await renderVideo(swap, current, scenario, model, info, {
+        sourceUrl,
+        seconds,
+        keyframeUrl: swapAcceptsReferences(model) ? current.keyframeUrl : null,
+        filename: `${item.id}-raw.mp4`,
+      });
     }
-    await setItem(item.id, { status: "video", error: null, videoModel: model });
-    const rawVideoUrl = await renderVideo(swap, current, scenario, model);
     await setItem(item.id, { rawVideoUrl });
     current = { ...current, rawVideoUrl };
     const voiceId = swap.voiceMode === "voice" ? swap.voiceId : null;
@@ -581,8 +721,9 @@ export async function retrySwapItem(
   opts: { newFrame: boolean },
 ): Promise<void> {
   const { videoModel } = resolveSwapModels(swap);
+  const resume = item.status === "error" && item.videoModel === videoModel;
   await setItem(item.id, { status: opts.newFrame || !item.keyframeUrl ? "frame" : "video", error: null, videoModel });
-  void runSwapItem(swap, { ...item, videoModel }, opts);
+  void runSwapItem(swap, { ...item, videoModel }, { ...opts, resume });
 }
 
 /** Swap only the voice on a finished video (no new render). */
@@ -631,7 +772,8 @@ export async function dubSwapItem(
 }
 
 export async function deleteSwapItemMedia(item: PersonSwapItem): Promise<void> {
-  for (const url of [item.keyframeUrl, item.rawVideoUrl, item.videoUrl]) {
+  const parts = parseSwapSegments(item.segments).flatMap((s) => [s.keyframeUrl, s.rawVideoUrl]);
+  for (const url of [item.keyframeUrl, item.rawVideoUrl, item.videoUrl, ...parts]) {
     await deleteMediaByPublicUrl(url).catch(() => {});
   }
 }

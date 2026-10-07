@@ -251,6 +251,20 @@ export async function deleteVariationSetMedia(userId: string, setId: string): Pr
   await deleteMediaPrefix(path.posix.join("generated", "_variations", userId, setId));
 }
 
+export async function savePhotoBatchBuffer(
+  userId: string,
+  batchId: string,
+  filename: string,
+  buf: Buffer,
+): Promise<string> {
+  const key = path.posix.join("generated", "_photo-batches", userId, batchId, filename);
+  return writeBytes(key, buf);
+}
+
+export async function deletePhotoBatchMedia(userId: string, batchId: string): Promise<void> {
+  await deleteMediaPrefix(path.posix.join("generated", "_photo-batches", userId, batchId));
+}
+
 export async function saveCreativeBuffer(
   userId: string,
   creativeId: string,

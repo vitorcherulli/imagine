@@ -33,6 +33,7 @@ import {
   DEFAULT_SWAP_IMAGE_MODEL,
   isSwapWorking,
   PERSON_SWAP_STATUS_LABELS,
+  parseSwapSegments,
   type PersonSwapMode,
   type PersonSwapStatus,
 } from "@/lib/person-swap";
@@ -275,6 +276,12 @@ function SwapItemCard({
     }
   }, [item.referenceUrls]);
 
+  const parts = React.useMemo(() => parseSwapSegments(item.segments), [item.segments]);
+  const partsLabel =
+    status === "video" && parts.length > 1
+      ? ` · ${parts.filter((p) => p.rawVideoUrl).length} of ${parts.length} parts done`
+      : "";
+
   async function run(key: string, body: Record<string, unknown>) {
     setBusy(key);
     setMenu(false);
@@ -300,6 +307,7 @@ function SwapItemCard({
         {working ? (
           <div className="absolute inset-x-0 bottom-0 flex items-center gap-1.5 bg-black/70 px-2 py-1.5 text-2xs text-white">
             <Loader2 className="h-3 w-3 animate-spin" /> {PERSON_SWAP_STATUS_LABELS[status]}
+            {partsLabel}
           </div>
         ) : null}
         {status === "error" ? (

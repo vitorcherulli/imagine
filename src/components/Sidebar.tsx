@@ -13,6 +13,7 @@ import {
   FolderOpen,
   Images,
   Languages,
+  Layers,
   LayoutGrid,
   Megaphone,
   MessagesSquare,
@@ -252,6 +253,13 @@ export function Sidebar({
               icon={<Wand2 className="h-3.5 w-3.5" />}
             />
             <SidebarNavLink
+              href="/batch-edit"
+              title="Batch edit — edit many photos at once with AI"
+              label="Batch edit"
+              active={pathname?.startsWith("/batch-edit")}
+              icon={<Layers className="h-3.5 w-3.5" />}
+            />
+            <SidebarNavLink
               href="/image-chat"
               title="Image chat — create images by chatting"
               label="Image chat"
@@ -333,6 +341,14 @@ export function Sidebar({
             collapsed
             active={pathname?.startsWith("/variations")}
             icon={<Wand2 className="h-4 w-4" />}
+          />
+          <SidebarNavLink
+            href="/batch-edit"
+            title="Batch edit"
+            label="Batch edit"
+            collapsed
+            active={pathname?.startsWith("/batch-edit")}
+            icon={<Layers className="h-4 w-4" />}
           />
           <SidebarNavLink
             href="/image-chat"

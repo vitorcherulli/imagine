@@ -20,6 +20,7 @@ import {
   isSwapWorking,
   PERSON_SWAP_MAX_SECONDS,
   PERSON_SWAP_MAX_UPLOAD_BYTES,
+  planSwapSegments,
   PUBLIC_MEDIA_REQUIRED,
   type PersonSwapMode,
 } from "@/lib/person-swap";
@@ -60,7 +61,7 @@ function useRemembered(key: string, fallback: string): [string, (v: string) => v
 export function estimateSwapCost(model: CatalogModel | undefined, seconds: number): string | null {
   const perSecond = Number(model?.priceHint?.match(/\$([\d.]+)\/s/)?.[1]);
   if (!model || !Number.isFinite(perSecond) || seconds <= 0) return null;
-  const used = Math.min(seconds, swapMaxSeconds(model));
+  const used = Math.min(seconds, PERSON_SWAP_MAX_SECONDS);
   return `≈ $${(perSecond * used).toFixed(2)} per person`;
 }
 
@@ -172,6 +173,7 @@ function NewSwapCard({
   const [submitting, setSubmitting] = React.useState(false);
   const model = models.find((m) => m.value === videoModel);
   const maxSeconds = model ? swapMaxSeconds(model) : PERSON_SWAP_MAX_SECONDS;
+  const partCount = duration > 0 ? planSwapSegments(duration, maxSeconds).length : 1;
 
   React.useEffect(() => {
     return () => {
@@ -306,9 +308,18 @@ function NewSwapCard({
           />
         </div>
         {duration > 0 ? (
-          <p className={cn("text-2xs", duration > maxSeconds ? "text-amber-600" : "text-muted-foreground")}>
+          <p
+            className={cn(
+              "text-2xs",
+              duration > PERSON_SWAP_MAX_SECONDS ? "text-amber-600" : "text-muted-foreground",
+            )}
+          >
             {duration.toFixed(1)} s
-            {duration > maxSeconds ? ` — ${model?.label ?? "this AI"} uses the first ${maxSeconds} s` : ""}
+            {duration > PERSON_SWAP_MAX_SECONDS
+              ? ` — only the first ${PERSON_SWAP_MAX_SECONDS} s are used`
+              : partCount > 1
+                ? ` — ${model?.label ?? "this AI"} renders up to ${maxSeconds} s at a time, so it's made in ${partCount} parts and joined`
+                : ""}
           </p>
         ) : null}
       </div>
