@@ -3,6 +3,7 @@ import {
   catalogFallback,
   isVideoEditModel,
   PERSON_SWAP_MODELS,
+  preferredVideoResolution,
   type CatalogModel,
   type CatalogModelKind,
 } from "@/lib/model-catalog";
@@ -42,7 +43,25 @@ function splitName(id: string, name?: string): { label: string; provider: string
   return { provider: id.split("/")[0] ?? "", label: raw };
 }
 
-function videoPriceHint(skus?: Record<string, string> | null): string | null {
+const TOKEN_FRAME_PIXELS: Record<string, number> = {
+  "480p": 854 * 480,
+  "720p": 1280 * 720,
+  "1080p": 1920 * 1080,
+  "4K": 3840 * 2160,
+};
+
+/** Token-billed models (Seedance): tokens = width × height × seconds × 24 / 1024. */
+function tokensPerSecond(resolutions?: string[] | null): number {
+  const pixels = TOKEN_FRAME_PIXELS[preferredVideoResolution(resolutions)] ?? TOKEN_FRAME_PIXELS["720p"]!;
+  return (pixels * 24) / 1024;
+}
+
+function formatPerSecond(dollars: number): string | null {
+  if (!Number.isFinite(dollars) || dollars <= 0) return null;
+  return `~$${dollars < 0.1 ? dollars.toFixed(3).replace(/0$/, "") : dollars.toFixed(2)}/s`;
+}
+
+function videoPriceHint(skus?: Record<string, string> | null, resolutions?: string[] | null): string | null {
   if (!skus) return null;
   const dollars = (key: string) => (skus[key] !== undefined ? Number(skus[key]) : NaN);
   const candidates = [
@@ -55,9 +74,22 @@ function videoPriceHint(skus?: Record<string, string> | null): string | null {
     dollars("cents_per_second_output_720p") / 100,
     dollars("cents_per_second_output") / 100,
     dollars("cents_per_video_output_second_720p") / 100,
+    (dollars("video_tokens_without_audio") || dollars("video_tokens")) * tokensPerSecond(resolutions),
   ];
   const perSecond = candidates.find((n) => Number.isFinite(n) && n > 0);
-  return perSecond ? `~$${perSecond.toFixed(2)}/s` : null;
+  if (perSecond) return formatPerSecond(perSecond);
+  const perMegapixel = dollars("cents_per_megapixel_second_precise") / 100;
+  return Number.isFinite(perMegapixel) && perMegapixel > 0 ? `~$${perMegapixel.toFixed(3)}/MP·s` : null;
+}
+
+/**
+ * Price when editing a video. Token-billed models charge the input video's tokens too
+ * (at the cheaper "with video input" rate), so a second of output costs two seconds of tokens.
+ */
+function videoEditPriceHint(skus?: Record<string, string> | null, resolutions?: string[] | null): string | null {
+  const rate = Number(skus?.video_tokens_with_video_input);
+  if (Number.isFinite(rate) && rate > 0) return formatPerSecond(rate * tokensPerSecond(resolutions) * 2);
+  return videoPriceHint(skus, resolutions);
 }
 
 function mapImage(m: RawImageModel): CatalogModel {
@@ -79,7 +111,8 @@ function mapVideo(m: RawVideoModel): CatalogModel {
     ...splitName(m.id, m.name),
     created: m.created ?? 0,
     description: m.description?.slice(0, 240),
-    priceHint: videoPriceHint(m.pricing_skus),
+    priceHint: videoPriceHint(m.pricing_skus, m.supported_resolutions),
+    editPriceHint: videoEditPriceHint(m.pricing_skus, m.supported_resolutions),
     resolutions: m.supported_resolutions ?? null,
     aspectRatios: m.supported_aspect_ratios ?? null,
     durations: m.supported_durations ?? null,
@@ -140,8 +173,10 @@ export function filterSwapCapable(models: CatalogModel[]): CatalogModel[] {
   const curated = PERSON_SWAP_MODELS.filter((m) => live.has(m.value)).map((m) => ({
     ...live.get(m.value)!,
     description: m.description,
-    priceHint: live.get(m.value)!.priceHint ?? m.priceHint,
+    priceHint: live.get(m.value)!.editPriceHint ?? live.get(m.value)!.priceHint ?? m.priceHint,
   }));
-  const rest = [...live.values()].filter((m) => !PERSON_SWAP_MODELS.some((c) => c.value === m.value));
+  const rest = [...live.values()]
+    .filter((m) => !PERSON_SWAP_MODELS.some((c) => c.value === m.value))
+    .map((m) => ({ ...m, priceHint: m.editPriceHint ?? m.priceHint }));
   return [...curated, ...rest];
 }

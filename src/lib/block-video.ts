@@ -20,7 +20,12 @@ import { canStretchVideoWithSlowMotion } from "@/lib/video-duration-mismatch";
 import { resolveProjectApiModels, resolveVideoGenerateAudio } from "@/lib/project-api-models";
 import { getAspectRatio } from "@/lib/video-format";
 import { openRouterHeaders } from "@/lib/openrouter/client";
-import { submitVideo, waitForVideo, isVideoKeyframeRejectedError } from "@/lib/openrouter/videos";
+import {
+  submitVideo,
+  waitForVideo,
+  isVideoKeyframeRejectedError,
+  type VideoSubmitInput,
+} from "@/lib/openrouter/videos";
 import { buildSceneVisualPrompt, parseStyleBible } from "@/lib/style-bible";
 import {
   resolveBlockScenario,
@@ -137,23 +142,28 @@ export async function generateBlockVideo(opts: {
     generateAudio: resolveVideoGenerateAudio(models.videoClipAudio),
   };
 
-  let submit;
+  const generate = async (input: VideoSubmitInput) => {
+    const submit = await submitVideo(input);
+    return waitForVideo(submit.id, { pollingUrl: submit.polling_url });
+  };
+
+  let result;
   try {
-    submit = await submitVideo({
+    result = await generate({
       ...videoInput,
       frame_images: firstFrameUrl
         ? [{ url: firstFrameUrl, frame: "first_frame" as const }]
         : undefined,
     });
   } catch (err) {
+    // Moderation can reject the keyframe at submit time or only once the job runs.
     if (!firstFrameUrl || !isVideoKeyframeRejectedError(err)) throw err;
     console.warn(
       `[video] keyframe rejected by provider moderation, retrying text-to-video for block ${block.id}`,
     );
-    submit = await submitVideo(videoInput);
+    result = await generate(videoInput);
   }
 
-  const result = await waitForVideo(submit.id, { pollingUrl: submit.polling_url });
   const fileUrl = result.unsigned_urls?.[0] ?? result.signed_urls?.[0];
   if (!fileUrl) throw new Error("Video response had no URL");
 

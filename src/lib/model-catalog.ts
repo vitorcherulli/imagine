@@ -10,6 +10,8 @@ export interface CatalogModel {
   created: number;
   description?: string;
   priceHint?: string | null;
+  /** Per-second price when the model edits an input video (Person swap). */
+  editPriceHint?: string | null;
   /** Image: max reference images accepted (0 = text-to-image only). */
   maxReferences?: number | null;
   resolutions?: string[] | null;
@@ -39,6 +41,7 @@ export const PERSON_SWAP_MODELS: CatalogModel[] = [
     label: "Seedance 2.0",
     provider: "ByteDance",
     created: 0,
+    priceHint: "~$0.19/s",
     videoInput: true,
     durations: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
     description: "Good likeness from the reference photos. 4–15 s.",
@@ -48,6 +51,7 @@ export const PERSON_SWAP_MODELS: CatalogModel[] = [
     label: "Seedance 2.0 Fast",
     provider: "ByteDance",
     created: 0,
+    priceHint: "~$0.11/s",
     videoInput: true,
     durations: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
     description: "Cheaper and faster Seedance. 4–15 s.",
