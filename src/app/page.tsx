@@ -1,72 +1,21 @@
 import Link from "next/link";
-import { desc, eq, asc, inArray } from "drizzle-orm";
+import { desc, eq, asc } from "drizzle-orm";
 import { auth } from "@clerk/nextjs/server";
 import { db, schema } from "@/lib/db";
 import { Sidebar } from "@/components/Sidebar";
 import { ProjectsLibrary } from "@/components/ProjectsLibrary";
 import { Button } from "@/components/ui/button";
 import { Plus } from "lucide-react";
-import { resolveProjectCoverUrl } from "@/lib/project-cover";
+import { loadLibraryItems } from "@/lib/library-items-server";
+import { isLibraryKind } from "@/lib/library-items";
 
 export const dynamic = "force-dynamic";
 
-async function loadProjectCovers(projectIds: string[]) {
-  if (projectIds.length === 0) {
-    return {
-      thumbnailByProject: {} as Record<string, string | null | undefined>,
-      keyframeByProject: {} as Record<string, string | null>,
-      socialSlideByProject: {} as Record<string, string | null>,
-    };
-  }
-
-  const [youtubeRows, blockRows, socialRows] = await Promise.all([
-    db
-      .select({
-        projectId: schema.youtubeMetadata.projectId,
-        thumbnailUrl: schema.youtubeMetadata.thumbnailUrl,
-      })
-      .from(schema.youtubeMetadata)
-      .where(inArray(schema.youtubeMetadata.projectId, projectIds)),
-    db
-      .select({
-        projectId: schema.storyBlocks.projectId,
-        keyframeUrl: schema.storyBlocks.keyframeUrl,
-        position: schema.storyBlocks.position,
-      })
-      .from(schema.storyBlocks)
-      .where(inArray(schema.storyBlocks.projectId, projectIds))
-      .orderBy(asc(schema.storyBlocks.position)),
-    db
-      .select({
-        projectId: schema.socialSlides.projectId,
-        imageUrl: schema.socialSlides.imageUrl,
-        position: schema.socialSlides.position,
-      })
-      .from(schema.socialSlides)
-      .where(inArray(schema.socialSlides.projectId, projectIds))
-      .orderBy(asc(schema.socialSlides.position)),
-  ]);
-
-  const thumbnailByProject = Object.fromEntries(
-    youtubeRows.map((row) => [row.projectId, row.thumbnailUrl]),
-  );
-
-  const keyframeByProject: Record<string, string | null> = {};
-  for (const block of blockRows) {
-    if (keyframeByProject[block.projectId] || !block.keyframeUrl) continue;
-    keyframeByProject[block.projectId] = block.keyframeUrl;
-  }
-
-  const socialSlideByProject: Record<string, string | null> = {};
-  for (const slide of socialRows) {
-    if (socialSlideByProject[slide.projectId] || !slide.imageUrl) continue;
-    socialSlideByProject[slide.projectId] = slide.imageUrl;
-  }
-
-  return { thumbnailByProject, keyframeByProject, socialSlideByProject };
-}
-
-export default async function HomePage() {
+export default async function HomePage({
+  searchParams,
+}: {
+  searchParams: { type?: string };
+}) {
   const { userId } = await auth();
   if (!userId) return null;
 
@@ -83,21 +32,8 @@ export default async function HomePage() {
       .orderBy(asc(schema.projectFolders.position), asc(schema.projectFolders.name)),
   ]);
 
-  const projectIds = projects.map((p) => p.id);
-  const { thumbnailByProject, keyframeByProject, socialSlideByProject } =
-    await loadProjectCovers(projectIds);
-
-  const coverByProjectId = Object.fromEntries(
-    projects.map((project) => [
-      project.id,
-      resolveProjectCoverUrl({
-        thumbnailUrl: thumbnailByProject[project.id],
-        anchorImageUrl: project.anchorImageUrl,
-        keyframeUrl:
-          socialSlideByProject[project.id] ?? keyframeByProject[project.id],
-      }),
-    ]),
-  );
+  const items = await loadLibraryItems(userId, projects);
+  const initialType = isLibraryKind(searchParams.type) ? searchParams.type : "all";
 
   return (
     <div className="flex h-screen w-full">
@@ -107,7 +43,7 @@ export default async function HomePage() {
           <div>
             <h1 className="text-base font-semibold">Your projects</h1>
             <p className="text-2xs text-muted-foreground">
-              Organize by folder, duplicate templates, open recent work.
+              Everything you make lives here — filter by type, organize by folder.
             </p>
           </div>
           <div className="flex shrink-0 gap-2">
@@ -128,9 +64,9 @@ export default async function HomePage() {
 
         <section className="px-5 py-5">
           <ProjectsLibrary
-            initialProjects={projects}
+            initialItems={items}
             initialFolders={folders}
-            coverByProjectId={coverByProjectId}
+            initialType={initialType}
           />
         </section>
       </main>

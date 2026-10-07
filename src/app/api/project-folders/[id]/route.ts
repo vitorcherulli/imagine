@@ -38,10 +38,26 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
   const folder = await getOwnedFolder(params.id, userId);
   if (!folder) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  await db
-    .update(schema.projects)
-    .set({ folderId: null, updatedAt: new Date() })
-    .where(and(eq(schema.projects.folderId, params.id), eq(schema.projects.userId, userId)));
+  await Promise.all([
+    db
+      .update(schema.projects)
+      .set({ folderId: null, updatedAt: new Date() })
+      .where(and(eq(schema.projects.folderId, params.id), eq(schema.projects.userId, userId))),
+    db
+      .update(schema.variationSets)
+      .set({ folderId: null })
+      .where(
+        and(eq(schema.variationSets.folderId, params.id), eq(schema.variationSets.userId, userId)),
+      ),
+    db
+      .update(schema.imageChats)
+      .set({ folderId: null })
+      .where(and(eq(schema.imageChats.folderId, params.id), eq(schema.imageChats.userId, userId))),
+    db
+      .update(schema.personSwaps)
+      .set({ folderId: null })
+      .where(and(eq(schema.personSwaps.folderId, params.id), eq(schema.personSwaps.userId, userId))),
+  ]);
 
   await db.delete(schema.projectFolders).where(eq(schema.projectFolders.id, params.id));
   return NextResponse.json({ ok: true });

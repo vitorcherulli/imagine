@@ -4,7 +4,7 @@ import { db, schema } from "@/lib/db";
 import type { PersonSwap, PersonSwapItem, Scenario } from "@/lib/db/schema";
 import { generateImage } from "@/lib/openrouter/images";
 import { openRouterHeaders } from "@/lib/openrouter/client";
-import { submitVideo, waitForVideo, type VideoReferenceInput } from "@/lib/openrouter/videos";
+import { submitVideoWithCapacityRetry, type VideoReferenceInput } from "@/lib/openrouter/videos";
 import { chatCompletion } from "@/lib/openrouter/llm";
 import { convertSpeechToVoice } from "@/lib/elevenlabs/speech-to-speech";
 import {
@@ -31,7 +31,7 @@ import { catalogImageParams, imageResultToBuffer } from "@/lib/image-model-param
 import { registerGeneratedMediaSafe } from "@/lib/media-library-server";
 import { parseScenarioImageUrls } from "@/lib/scenario-images";
 import { createDubProject } from "@/lib/dubbing/create";
-import { ELEVENLABS_MULTILINGUAL_MODEL } from "@/lib/project-api-models";
+import { ELEVENLABS_MULTILINGUAL_MODEL, ELEVENLABS_VOICE_OPTIONS } from "@/lib/project-api-models";
 import {
   deleteMediaByPublicUrl,
   readMediaBuffer,
@@ -464,7 +464,7 @@ async function renderVideo(
       `${info.label} needs at least ${Math.min(...info.durations)} s of video — pick Aleph 2.0 for short clips.`,
     );
   }
-  const submit = await submitVideo({
+  const videoInput = {
     model,
     prompt: buildVideoPrompt(swap, item, scenario, {
       withKeyframe: withRefs && !!item.keyframeUrl,
@@ -478,8 +478,8 @@ async function renderVideo(
     resolution: info.resolutions?.length ? preferredVideoResolution(info.resolutions) : undefined,
     generateAudio: isSeedance ? false : undefined,
     providerOptions: keyframe && isRunway ? { runway: { keyframes: [{ uri: keyframe, seconds: 0 }] } } : undefined,
-  });
-  const result = await waitForVideo(submit.id, { pollingUrl: submit.polling_url, timeoutMs: 40 * 60 * 1000 });
+  };
+  const result = await submitVideoWithCapacityRetry(videoInput, 40 * 60 * 1000);
   const fileUrl = result.unsigned_urls?.[0] ?? result.signed_urls?.[0];
   if (!fileUrl) throw new Error("Video response had no URL");
   const res = await fetch(fileUrl, { headers: openRouterHeaders() });
@@ -600,9 +600,13 @@ export async function revoiceSwapItem(
   });
 }
 
+function isBuiltInElevenLabsVoice(voiceId: string): boolean {
+  return ELEVENLABS_VOICE_OPTIONS.some((o) => o.value === voiceId);
+}
+
 /**
- * Send a finished video to Dubbing. Our ElevenLabs voice carries over; with the original voice
- * the dub clones the speaker so the new language still sounds like them.
+ * Send a finished video to Dubbing in the same voice: built-in voices go as the TTS voice, cloned
+ * voices as the dub's clone, and the original voice is cloned from the video.
  */
 export async function dubSwapItem(
   swap: PersonSwap,
@@ -619,8 +623,10 @@ export async function dubSwapItem(
     mimeType: "video/mp4",
     sourceType: "video",
     targetLanguage,
-    useVoiceClone: !item.voiceId,
-    ...(item.voiceId ? { ttsModel: ELEVENLABS_MULTILINGUAL_MODEL, ttsVoice: item.voiceId } : {}),
+    ttsModel: ELEVENLABS_MULTILINGUAL_MODEL,
+    ...(item.voiceId && isBuiltInElevenLabsVoice(item.voiceId)
+      ? { ttsVoice: item.voiceId }
+      : { useVoiceClone: true, clonedVoiceId: item.voiceId }),
   });
 }
 

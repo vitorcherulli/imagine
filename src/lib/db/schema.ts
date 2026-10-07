@@ -262,6 +262,7 @@ export const scenarios = sqliteTable("scenarios", {
 export const variationSets = sqliteTable("variation_sets", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull(),
+  folderId: text("folder_id"),
   name: text("name").notNull(),
   sourceImageUrl: text("source_image_url").notNull(),
   instructions: text("instructions"),
@@ -403,6 +404,7 @@ export const creativeFolders = sqliteTable("creative_folders", {
 export const imageChats = sqliteTable("image_chats", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull(),
+  folderId: text("folder_id"),
   title: text("title").notNull().default("New chat"),
   imageModel: text("image_model"),
   aspectRatio: text("aspect_ratio").notNull().default("1:1"),
@@ -439,6 +441,7 @@ export const imageChatMessages = sqliteTable("image_chat_messages", {
 export const personSwaps = sqliteTable("person_swaps", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull(),
+  folderId: text("folder_id"),
   name: text("name").notNull(),
   /** Prepared copy (H.264, ≤ 720p, ≤ 30 s). */
   sourceUrl: text("source_url").notNull(),

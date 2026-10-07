@@ -34,6 +34,8 @@ export async function createDubProject(input: {
   targetLanguage: string;
   backgroundGain?: number;
   useVoiceClone?: boolean;
+  /** Existing ElevenLabs voice to dub with instead of cloning the source. */
+  clonedVoiceId?: string | null;
   ttsVoice?: string | null;
   ttsModel?: string | null;
   llmModel?: string | null;
@@ -83,7 +85,7 @@ export async function createDubProject(input: {
     dubTargetLanguage: normalizeDubLanguage(input.targetLanguage),
     dubBackgroundGain: backgroundGain,
     dubUseVoiceClone: Boolean(input.useVoiceClone),
-    dubClonedVoiceId: null,
+    dubClonedVoiceId: input.useVoiceClone ? input.clonedVoiceId ?? null : null,
     folderId: input.folderId ?? null,
     status: "draft",
     createdAt: now,

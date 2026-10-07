@@ -194,6 +194,7 @@ export const scenarios = pgTable("scenarios", {
 export const variationSets = pgTable("variation_sets", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull(),
+  folderId: text("folder_id"),
   name: text("name").notNull(),
   sourceImageUrl: text("source_image_url").notNull(),
   instructions: text("instructions"),
@@ -304,6 +305,7 @@ export const creativeFolders = pgTable("creative_folders", {
 export const imageChats = pgTable("image_chats", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull(),
+  folderId: text("folder_id"),
   title: text("title").notNull().default("New chat"),
   imageModel: text("image_model"),
   aspectRatio: text("aspect_ratio").notNull().default("1:1"),
@@ -331,6 +333,7 @@ export const imageChatMessages = pgTable("image_chat_messages", {
 export const personSwaps = pgTable("person_swaps", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull(),
+  folderId: text("folder_id"),
   name: text("name").notNull(),
   sourceUrl: text("source_url").notNull(),
   audioUrl: text("audio_url"),

@@ -66,14 +66,16 @@ function parseVideoProviderError(text: string): ParsedProviderError | null {
     let code = outer.error?.code;
     if (!message) return null;
 
-    const httpMatch = message.match(/^HTTP \d+:\s*(\{[\s\S]+\})\s*$/);
+    const httpMatch = message.match(/^HTTP (\d+):\s*(\{[\s\S]+\})\s*$/);
     if (httpMatch) {
+      code = code ?? httpMatch[1];
       try {
-        const inner = JSON.parse(httpMatch[1]) as {
+        const inner = JSON.parse(httpMatch[2]) as {
           error?: { message?: string; code?: string };
           message?: string;
+          detail?: string;
         };
-        message = inner.error?.message ?? inner.message ?? message;
+        message = inner.error?.message ?? inner.message ?? inner.detail ?? message;
         code = inner.error?.code ?? code;
       } catch {
         /* keep outer message */
@@ -85,8 +87,23 @@ function parseVideoProviderError(text: string): ParsedProviderError | null {
   }
 }
 
+const TRANSIENT_PROVIDER_PATTERN =
+  /over capacity|shedding requests|temporarily unavailable|rate limit|too many requests|provider is overloaded|\b(429|502|503|504)\b/i;
+
+/** Provider is busy or rate-limited — the same request can succeed when resubmitted later. */
+export function isTransientVideoProviderError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return TRANSIENT_PROVIDER_PATTERN.test(message);
+}
+
 function friendlyVideoProviderMessage(parsed: ParsedProviderError): string {
   const haystack = `${parsed.code ?? ""} ${parsed.message}`.toLowerCase();
+  if (TRANSIENT_PROVIDER_PATTERN.test(haystack)) {
+    return (
+      "The video provider is over capacity right now (503). " +
+      "Try again in a few minutes or pick another model."
+    );
+  }
   if (
     haystack.includes("inputimagesensitivecontentdetected") ||
     haystack.includes("privacyinformation") ||
@@ -204,6 +221,31 @@ export async function getVideoStatus(jobId: string, pollingUrl?: string): Promis
   return (await res.json()) as VideoStatus;
 }
 
+const CAPACITY_RETRY_DELAYS_MS = [20_000, 60_000];
+
+/**
+ * Submit + wait, resubmitting when the provider sheds load (503 "over capacity", 429).
+ * Failed jobs are not billed, so a resubmit only costs time.
+ */
+export async function submitVideoWithCapacityRetry(
+  input: VideoSubmitInput,
+  timeoutMs?: number,
+): Promise<VideoStatus> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const submit = await submitVideo(input);
+      return await waitForVideo(submit.id, { pollingUrl: submit.polling_url, timeoutMs });
+    } catch (err) {
+      const delay = CAPACITY_RETRY_DELAYS_MS[attempt];
+      if (delay === undefined || !isTransientVideoProviderError(err)) throw err;
+      console.warn(
+        `[video] ${input.model ?? OPENROUTER_MODELS.video} over capacity — retry ${attempt + 1} in ${delay / 1000}s`,
+      );
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+}
+
 export async function waitForVideo(
   jobId: string,
   opts: { pollingUrl?: string; intervalMs?: number; timeoutMs?: number } = {},
@@ -219,7 +261,9 @@ export async function waitForVideo(
       status.status === "cancelled" ||
       status.status === "expired"
     ) {
-      throw new Error(status.error ?? `Video generation ${status.status}`);
+      if (!status.error) throw new Error(`Video generation ${status.status}`);
+      const parsed = parseVideoProviderError(JSON.stringify({ error: { message: status.error } }));
+      throw new Error(parsed ? friendlyVideoProviderMessage(parsed) : status.error);
     }
     if (Date.now() - start > timeoutMs) {
       throw new Error("Video generation timed out");

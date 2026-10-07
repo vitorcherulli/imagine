@@ -2,11 +2,21 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Check, ImagePlus, Mic, UserRound, X } from "lucide-react";
+import { Check, ImagePlus, Loader2, Mic, Upload, UserRound, X } from "lucide-react";
 import type { Avatar } from "@/lib/db/schema";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useToast } from "@/components/ui/use-toast";
 import { SegmentedControl } from "@/components/social-art/SocialArtControls";
 import { DEFAULT_ELEVENLABS_VOICE, ELEVENLABS_VOICE_OPTIONS } from "@/lib/project-api-models";
 import { PERSON_SWAP_MAX_PEOPLE } from "@/lib/person-swap";
@@ -156,10 +166,59 @@ export function PeoplePicker({
   );
 }
 
-export function voiceLabel(voiceId: string | null | undefined): string {
-  if (!voiceId) return "Original voice";
-  const label = ELEVENLABS_VOICE_OPTIONS.find((v) => v.value === voiceId)?.label ?? voiceId;
-  return voiceId === DEFAULT_ELEVENLABS_VOICE ? `${label.split(" — ")[0]} (our voice)` : label.split(" — ")[0];
+type VoiceOption = { voiceId: string; name: string; category: string };
+
+const BUILT_IN_VOICES: VoiceOption[] = ELEVENLABS_VOICE_OPTIONS.map((o) => ({
+  voiceId: o.value,
+  name: o.label,
+  category: "library",
+}));
+const OWN_CATEGORIES = new Set(["cloned", "professional", "generated"]);
+
+let voicesRequest: Promise<VoiceOption[]> | null = null;
+const voiceListeners = new Set<(voices: VoiceOption[]) => void>();
+
+function loadVoices(force = false): Promise<VoiceOption[]> {
+  if (!voicesRequest || force) {
+    voicesRequest = fetch("/api/voices/elevenlabs", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((d: { voices?: VoiceOption[] }) => (d.voices?.length ? d.voices : BUILT_IN_VOICES))
+      .catch(() => {
+        voicesRequest = null;
+        return BUILT_IN_VOICES;
+      });
+    void voicesRequest.then((voices) => voiceListeners.forEach((fn) => fn(voices)));
+  }
+  return voicesRequest;
+}
+
+/** ElevenLabs voices of the account (our voice, clones, library), shared across pickers. */
+export function useElevenLabsVoices(): VoiceOption[] {
+  const [voices, setVoices] = React.useState<VoiceOption[]>(BUILT_IN_VOICES);
+  React.useEffect(() => {
+    voiceListeners.add(setVoices);
+    void loadVoices().then(setVoices);
+    return () => {
+      voiceListeners.delete(setVoices);
+    };
+  }, []);
+  return voices;
+}
+
+function shortName(name: string): string {
+  return name.split(" — ")[0] ?? name;
+}
+
+export function useVoiceLabel(): (voiceId: string | null | undefined) => string {
+  const voices = useElevenLabsVoices();
+  return React.useCallback(
+    (voiceId) => {
+      if (!voiceId) return "Original voice";
+      const name = shortName(voices.find((v) => v.voiceId === voiceId)?.name ?? "Custom voice");
+      return voiceId === DEFAULT_ELEVENLABS_VOICE ? `${name} (our voice)` : name;
+    },
+    [voices],
+  );
 }
 
 export function VoiceSelect({
@@ -173,20 +232,147 @@ export function VoiceSelect({
   className?: string;
   includeOriginal?: boolean;
 }) {
+  const voices = useElevenLabsVoices();
+  const [cloning, setCloning] = React.useState(false);
+  const ours = voices.find((v) => v.voiceId === DEFAULT_ELEVENLABS_VOICE);
+  const own = voices.filter((v) => v.voiceId !== DEFAULT_ELEVENLABS_VOICE && OWN_CATEGORIES.has(v.category));
+  const library = voices.filter((v) => v.voiceId !== DEFAULT_ELEVENLABS_VOICE && !OWN_CATEGORIES.has(v.category));
+
   return (
-    <Select value={value ?? "__original"} onValueChange={(v) => onChange(v === "__original" ? null : v)}>
-      <SelectTrigger className={cn("h-8 text-xs", className)}>
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        {includeOriginal ? <SelectItem value="__original">Original voice</SelectItem> : null}
-        {ELEVENLABS_VOICE_OPTIONS.map((v) => (
-          <SelectItem key={v.value} value={v.value}>
-            {v.value === DEFAULT_ELEVENLABS_VOICE ? `★ ${v.label.split(" — ")[0]} — our voice` : v.label}
+    <>
+      <Select
+        value={value ?? "__original"}
+        onValueChange={(v) => {
+          if (v === "__clone") setCloning(true);
+          else onChange(v === "__original" ? null : v);
+        }}
+      >
+        <SelectTrigger className={cn("h-8 text-xs", className)}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {includeOriginal ? <SelectItem value="__original">Original voice</SelectItem> : null}
+          {ours ? (
+            <SelectItem value={ours.voiceId}>★ {shortName(ours.name)} — our voice</SelectItem>
+          ) : null}
+          {own.length > 0 ? (
+            <SelectGroup>
+              <div className="px-2 pb-0.5 pt-1.5 text-[10px] uppercase text-muted-foreground">Cloned voices</div>
+              {own.map((v) => (
+                <SelectItem key={v.voiceId} value={v.voiceId}>
+                  {v.name}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          ) : null}
+          <SelectGroup>
+            <div className="px-2 pb-0.5 pt-1.5 text-[10px] uppercase text-muted-foreground">Library</div>
+            {library.map((v) => (
+              <SelectItem key={v.voiceId} value={v.voiceId}>
+                {v.name}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+          <SelectItem value="__clone" className="font-medium text-accent">
+            + Clone a voice…
           </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+        </SelectContent>
+      </Select>
+      {cloning ? (
+        <CloneVoiceDialog
+          onClose={() => setCloning(false)}
+          onCloned={(voiceId) => {
+            setCloning(false);
+            onChange(voiceId);
+          }}
+        />
+      ) : null}
+    </>
+  );
+}
+
+/** ElevenLabs instant clone from a recording of the person speaking. */
+function CloneVoiceDialog({ onClose, onCloned }: { onClose: () => void; onCloned: (voiceId: string) => void }) {
+  const { toast } = useToast();
+  const fileRef = React.useRef<HTMLInputElement>(null);
+  const [name, setName] = React.useState("");
+  const [file, setFile] = React.useState<File | null>(null);
+  const [saving, setSaving] = React.useState(false);
+
+  async function clone() {
+    if (!file || !name.trim()) return;
+    setSaving(true);
+    try {
+      const fd = new FormData();
+      fd.set("name", name.trim());
+      fd.set("file", file);
+      const res = await fetch("/api/voices/elevenlabs/clone", { method: "POST", body: fd });
+      const data = (await res.json().catch(() => ({}))) as { voiceId?: string; error?: string };
+      if (!res.ok || !data.voiceId) throw new Error(data.error || `HTTP ${res.status}`);
+      await loadVoices(true);
+      toast({ title: "Voice cloned", description: `“${name.trim()}” is ready to use.` });
+      onCloned(data.voiceId);
+    } catch (err) {
+      toast({
+        title: "Could not clone",
+        description: err instanceof Error ? err.message : String(err),
+        variant: "destructive",
+      });
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(open) => (!open && !saving ? onClose() : undefined)}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Clone a voice</DialogTitle>
+          <DialogDescription>
+            Upload 1–3 minutes of the person speaking clearly (audio or video), without music. ElevenLabs
+            creates the voice in your account and it shows up in every voice list.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div>
+            <Label htmlFor="clone-name">Voice name</Label>
+            <Input
+              id="clone-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Vinícios"
+              maxLength={60}
+            />
+          </div>
+          <div>
+            <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()} className="w-full">
+              <Upload className="h-3.5 w-3.5" />
+              {file ? file.name : "Choose audio or video"}
+            </Button>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="audio/*,video/*"
+              className="hidden"
+              onChange={(e) => {
+                const next = e.target.files?.[0] ?? null;
+                setFile(next);
+                if (next && !name.trim()) setName(next.name.replace(/\.[^.]+$/, "").slice(0, 60));
+                e.target.value = "";
+              }}
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" size="sm" onClick={onClose} disabled={saving}>
+              Cancel
+            </Button>
+            <Button variant="primary" size="sm" onClick={() => void clone()} disabled={!file || !name.trim() || saving}>
+              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mic className="h-3.5 w-3.5" />}
+              Clone voice
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -221,7 +407,7 @@ export function VoiceControl({
         {!hasAudio
           ? "This video has no sound."
           : voiceId
-            ? "ElevenLabs re-voices the speech with the same timing and emotion, so the lips still match. Background music is removed."
+            ? "ElevenLabs re-voices the speech with the same timing and emotion, so the lips still match. Pick a cloned voice to sound like the new person. Background music is removed."
             : "The new person keeps the original soundtrack."}
       </p>
     </div>

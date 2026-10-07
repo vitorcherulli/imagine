@@ -43,8 +43,8 @@ import {
   PeoplePicker,
   peopleCount,
   VoiceControl,
+  useVoiceLabel,
   VoiceSelect,
-  voiceLabel,
   type PeopleValue,
 } from "@/components/person-swap/parts";
 import { estimateSwapCost } from "@/components/person-swap/PersonSwapManager";
@@ -264,6 +264,7 @@ function SwapItemCard({
   const [menu, setMenu] = React.useState(false);
   const [busy, setBusy] = React.useState<string | null>(null);
   const [dubLang, setDubLang] = React.useState("en");
+  const voiceLabel = useVoiceLabel();
   const status = item.status as PersonSwapStatus;
   const working = isSwapWorking(status);
   const fallbackPhoto = React.useMemo(() => {

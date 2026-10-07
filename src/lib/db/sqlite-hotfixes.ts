@@ -756,6 +756,21 @@ export const SQLITE_COLUMN_HOTFIXES = [
     column: "trashed_at",
     sql: `ALTER TABLE creatives ADD COLUMN trashed_at integer`,
   },
+  {
+    table: "variation_sets",
+    column: "folder_id",
+    sql: `ALTER TABLE variation_sets ADD COLUMN folder_id text`,
+  },
+  {
+    table: "image_chats",
+    column: "folder_id",
+    sql: `ALTER TABLE image_chats ADD COLUMN folder_id text`,
+  },
+  {
+    table: "person_swaps",
+    column: "folder_id",
+    sql: `ALTER TABLE person_swaps ADD COLUMN folder_id text`,
+  },
 ] as const;
 
 /** @deprecated use SQLITE_COLUMN_HOTFIXES */

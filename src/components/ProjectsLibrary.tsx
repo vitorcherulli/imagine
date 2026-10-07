@@ -15,7 +15,7 @@ import {
   Sparkles,
   Trash2,
 } from "lucide-react";
-import type { Project, ProjectFolder } from "@/lib/db/schema";
+import type { ProjectFolder } from "@/lib/db/schema";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -34,63 +34,91 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/use-toast";
-import { getVideoFormatSpec } from "@/lib/video-format";
-import { getSocialAspectRatioSpec } from "@/lib/social-aspect-ratio";
-import { isDubbingProject, isSocialProject, projectEditorHref } from "@/lib/social-content";
+import { projectEditorHref } from "@/lib/social-content";
+import {
+  LIBRARY_KINDS,
+  isProjectKind,
+  libraryItemKey,
+  type LibraryItem,
+  type LibraryKind,
+} from "@/lib/library-items";
 import { cn } from "@/lib/utils";
 import { ImageIcon } from "lucide-react";
 
 type LibraryView = "recent" | "all" | "unfiled" | `folder:${string}`;
+type TypeFilter = "all" | LibraryKind;
 
 interface Props {
-  initialProjects: Project[];
+  initialItems: LibraryItem[];
   initialFolders: ProjectFolder[];
-  coverByProjectId?: Record<string, string | null>;
+  initialType?: TypeFilter;
 }
 
 const RECENT_LIMIT = 8;
 
-export function ProjectsLibrary({
-  initialProjects,
-  initialFolders,
-  coverByProjectId = {},
-}: Props) {
+export function ProjectsLibrary({ initialItems, initialFolders, initialType = "all" }: Props) {
   const router = useRouter();
   const { toast } = useToast();
-  const [projects, setProjects] = React.useState(initialProjects);
+  const [allItems, setAllItems] = React.useState(initialItems);
   const [folders, setFolders] = React.useState(initialFolders);
-  const [view, setView] = React.useState<LibraryView>("recent");
+  const [view, setView] = React.useState<LibraryView>(
+    initialType === "all" ? "recent" : "all",
+  );
+  const [typeFilter, setTypeFilter] = React.useState<TypeFilter>(initialType);
   const [newFolderOpen, setNewFolderOpen] = React.useState(false);
   const [newFolderName, setNewFolderName] = React.useState("");
   const [creatingFolder, setCreatingFolder] = React.useState(false);
-  const [busyProjectId, setBusyProjectId] = React.useState<string | null>(null);
-  const [draggingProjectId, setDraggingProjectId] = React.useState<string | null>(null);
+  const [busyKey, setBusyKey] = React.useState<string | null>(null);
+  const [draggingKey, setDraggingKey] = React.useState<string | null>(null);
   const [dragOverTarget, setDragOverTarget] = React.useState<string | null>(null);
 
-  const sortedProjects = React.useMemo(
-    () =>
-      [...projects].sort(
-        (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
-      ),
-    [projects],
+  const countByKind = React.useMemo(() => {
+    const counts: Partial<Record<LibraryKind, number>> = {};
+    for (const item of allItems) counts[item.kind] = (counts[item.kind] ?? 0) + 1;
+    return counts;
+  }, [allItems]);
+
+  const typeOptions = LIBRARY_KINDS.filter(
+    (k) => (countByKind[k.id] ?? 0) > 0 || typeFilter === k.id,
   );
 
-  const recentProjects = sortedProjects.slice(0, RECENT_LIMIT);
+  function changeType(next: TypeFilter) {
+    setTypeFilter(next);
+    if (next !== "all" && view === "recent") setView("all");
+    const url = new URL(window.location.href);
+    if (next === "all") url.searchParams.delete("type");
+    else url.searchParams.set("type", next);
+    window.history.replaceState(null, "", url);
+  }
 
-  const visibleProjects = React.useMemo(() => {
-    if (view === "recent") return recentProjects;
-    if (view === "all") return sortedProjects;
-    if (view === "unfiled") return sortedProjects.filter((p) => !p.folderId);
+  const items = React.useMemo(
+    () =>
+      allItems
+        .filter((item) => typeFilter === "all" || item.kind === typeFilter)
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+    [allItems, typeFilter],
+  );
+
+  const recentItems = items.slice(0, RECENT_LIMIT);
+
+  const visibleItems = React.useMemo(() => {
+    if (view === "recent") return recentItems;
+    if (view === "all") return items;
+    if (view === "unfiled") return items.filter((p) => !p.folderId);
     if (view.startsWith("folder:")) {
       const folderId = view.slice("folder:".length);
-      return sortedProjects.filter((p) => p.folderId === folderId);
+      return items.filter((p) => p.folderId === folderId);
     }
-    return sortedProjects;
-  }, [view, sortedProjects, recentProjects]);
+    return items;
+  }, [view, items, recentItems]);
 
   const viewTitle = React.useMemo(() => {
     if (view === "recent") return "Recent";
-    if (view === "all") return "All projects";
+    if (view === "all") {
+      return typeFilter === "all"
+        ? "All projects"
+        : LIBRARY_KINDS.find((k) => k.id === typeFilter)?.label ?? "All projects";
+    }
     if (view === "unfiled") return "Unfiled";
     const folder = folders.find((f) => f.id === view.slice("folder:".length));
     return folder?.name ?? "Folder";
@@ -125,12 +153,12 @@ export function ProjectsLibrary({
   }
 
   async function deleteFolder(folderId: string, folderName: string) {
-    if (!confirm(`Delete folder "${folderName}"? Projects inside will move to Unfiled.`)) return;
+    if (!confirm(`Delete folder "${folderName}"? Everything inside will move to Unfiled.`)) return;
     try {
       const res = await fetch(`/api/project-folders/${folderId}`, { method: "DELETE" });
       if (!res.ok) throw new Error((await res.json()).error ?? "Failed");
       setFolders((prev) => prev.filter((f) => f.id !== folderId));
-      setProjects((prev) =>
+      setAllItems((prev) =>
         prev.map((p) => (p.folderId === folderId ? { ...p, folderId: null } : p)),
       );
       if (view === `folder:${folderId}`) setView("all");
@@ -144,13 +172,13 @@ export function ProjectsLibrary({
     }
   }
 
-  async function duplicateProject(projectId: string) {
-    setBusyProjectId(projectId);
+  async function duplicateProject(item: LibraryItem) {
+    setBusyKey(libraryItemKey(item));
     try {
-      const res = await fetch(`/api/projects/${projectId}/duplicate`, { method: "POST" });
+      const res = await fetch(`/api/projects/${item.id}/duplicate`, { method: "POST" });
       if (!res.ok) throw new Error((await res.json()).error ?? "Failed");
       const data = await res.json();
-      router.push(projectEditorHref({ id: data.id, contentType: projects.find((p) => p.id === projectId)?.contentType ?? "video" }));
+      router.push(projectEditorHref({ id: data.id, contentType: item.kind }));
       router.refresh();
       toast({ variant: "success", title: "Project duplicated" });
     } catch (err) {
@@ -160,49 +188,51 @@ export function ProjectsLibrary({
         description: err instanceof Error ? err.message : "Unknown error",
       });
     } finally {
-      setBusyProjectId(null);
+      setBusyKey(null);
     }
   }
 
-  async function moveProject(projectId: string, folderId: string | null) {
-    setBusyProjectId(projectId);
+  async function moveItem(item: LibraryItem, folderId: string | null) {
+    const key = libraryItemKey(item);
+    setBusyKey(key);
     try {
-      const res = await fetch(`/api/projects/${projectId}`, {
-        method: "PATCH",
+      const res = await fetch("/api/library/move", {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ folderId }),
+        body: JSON.stringify({ kind: item.kind, id: item.id, folderId }),
       });
       if (!res.ok) throw new Error((await res.json()).error ?? "Failed");
-      setProjects((prev) =>
-        prev.map((p) => (p.id === projectId ? { ...p, folderId, updatedAt: new Date() } : p)),
+      const updatedAt = new Date().toISOString();
+      setAllItems((prev) =>
+        prev.map((p) => (libraryItemKey(p) === key ? { ...p, folderId, updatedAt } : p)),
       );
     } catch (err) {
       toast({
         variant: "destructive",
-        title: "Could not move project",
+        title: "Could not move",
         description: err instanceof Error ? err.message : "Unknown error",
       });
     } finally {
-      setBusyProjectId(null);
+      setBusyKey(null);
     }
   }
 
   function countInFolder(folderId: string) {
-    return projects.filter((p) => p.folderId === folderId).length;
+    return items.filter((p) => p.folderId === folderId).length;
   }
 
-  function handleDragStart(projectId: string) {
-    setDraggingProjectId(projectId);
+  function handleDragStart(key: string) {
+    setDraggingKey(key);
   }
 
   function handleDragEnd() {
-    setDraggingProjectId(null);
+    setDraggingKey(null);
     setDragOverTarget(null);
   }
 
   function handleDragOver(target: string) {
     return (e: React.DragEvent) => {
-      if (!draggingProjectId) return;
+      if (!draggingKey) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = "move";
       if (dragOverTarget !== target) setDragOverTarget(target);
@@ -218,15 +248,14 @@ export function ProjectsLibrary({
   function handleDrop(folderId: string | null) {
     return async (e: React.DragEvent) => {
       e.preventDefault();
-      const projectId =
-        draggingProjectId ?? e.dataTransfer.getData("text/x-imagine-project-id");
-      setDraggingProjectId(null);
+      const key = draggingKey ?? e.dataTransfer.getData("text/x-imagine-library-item");
+      setDraggingKey(null);
       setDragOverTarget(null);
-      if (!projectId) return;
-      const project = projects.find((p) => p.id === projectId);
-      if (!project) return;
-      if ((project.folderId ?? null) === folderId) return;
-      await moveProject(projectId, folderId);
+      if (!key) return;
+      const item = allItems.find((p) => libraryItemKey(p) === key);
+      if (!item) return;
+      if ((item.folderId ?? null) === folderId) return;
+      await moveItem(item, folderId);
       const folderName = folderId
         ? folders.find((f) => f.id === folderId)?.name ?? "folder"
         : "Unfiled";
@@ -236,17 +265,17 @@ export function ProjectsLibrary({
 
   const navItems: Array<{ id: LibraryView; label: string; icon: React.ReactNode; count?: number }> =
     [
-      { id: "recent", label: "Recent", icon: <Clock className="h-3.5 w-3.5" />, count: recentProjects.length },
-      { id: "all", label: "All projects", icon: <LayoutGrid className="h-3.5 w-3.5" />, count: projects.length },
+      { id: "recent", label: "Recent", icon: <Clock className="h-3.5 w-3.5" />, count: recentItems.length },
+      { id: "all", label: "All projects", icon: <LayoutGrid className="h-3.5 w-3.5" />, count: items.length },
       {
         id: "unfiled",
         label: "Unfiled",
         icon: <Folder className="h-3.5 w-3.5" />,
-        count: projects.filter((p) => !p.folderId).length,
+        count: items.filter((p) => !p.folderId).length,
       },
     ];
 
-  if (projects.length === 0) {
+  if (allItems.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border bg-panel py-16 text-center">
         <Sparkles className="h-6 w-6 text-accent" />
@@ -370,33 +399,55 @@ export function ProjectsLibrary({
         </aside>
 
         <div className="min-w-0 flex-1">
+          <div className="mb-3 flex flex-wrap items-center gap-1.5">
+            <TypeChip
+              label="All types"
+              count={allItems.length}
+              active={typeFilter === "all"}
+              onClick={() => changeType("all")}
+            />
+            {typeOptions.map((k) => (
+              <TypeChip
+                key={k.id}
+                label={k.label}
+                count={countByKind[k.id] ?? 0}
+                active={typeFilter === k.id}
+                onClick={() => changeType(k.id)}
+              />
+            ))}
+          </div>
+
           <div className="mb-3 flex items-center justify-between gap-2">
             <h2 className="text-sm font-semibold">{viewTitle}</h2>
             <span className="text-2xs text-muted-foreground">
-              {visibleProjects.length} project{visibleProjects.length === 1 ? "" : "s"}
+              {visibleItems.length} project{visibleItems.length === 1 ? "" : "s"}
             </span>
           </div>
 
-          {visibleProjects.length === 0 ? (
+          {visibleItems.length === 0 ? (
             <div className="rounded-lg border border-dashed border-border bg-panel px-4 py-10 text-center text-2xs text-muted-foreground">
               No projects in this view.
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
-              {visibleProjects.map((p) => (
-                <ProjectCard
-                  key={p.id}
-                  project={p}
-                  folders={folders}
-                  coverUrl={coverByProjectId[p.id] ?? null}
-                  busy={busyProjectId === p.id}
-                  dragging={draggingProjectId === p.id}
-                  onDuplicate={() => void duplicateProject(p.id)}
-                  onMove={(folderId) => void moveProject(p.id, folderId)}
-                  onDragStart={() => handleDragStart(p.id)}
-                  onDragEnd={handleDragEnd}
-                />
-              ))}
+              {visibleItems.map((item) => {
+                const key = libraryItemKey(item);
+                return (
+                  <ProjectCard
+                    key={key}
+                    item={item}
+                    folders={folders}
+                    busy={busyKey === key}
+                    dragging={draggingKey === key}
+                    onDuplicate={
+                      isProjectKind(item.kind) ? () => void duplicateProject(item) : undefined
+                    }
+                    onMove={(folderId) => void moveItem(item, folderId)}
+                    onDragStart={() => handleDragStart(key)}
+                    onDragEnd={handleDragEnd}
+                  />
+                );
+              })}
             </div>
           )}
         </div>
@@ -440,10 +491,37 @@ export function ProjectsLibrary({
   );
 }
 
+function TypeChip({
+  label,
+  count,
+  active,
+  onClick,
+}: {
+  label: string;
+  count: number;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-2xs transition-colors",
+        active
+          ? "border-accent bg-accent text-accent-foreground"
+          : "border-border bg-panel text-foreground/80 hover:bg-muted",
+      )}
+    >
+      {label}
+      <span className="font-mono text-[10px] opacity-70">{count}</span>
+    </button>
+  );
+}
+
 function ProjectCard({
-  project,
+  item,
   folders,
-  coverUrl,
   busy,
   dragging,
   onDuplicate,
@@ -451,31 +529,25 @@ function ProjectCard({
   onDragStart,
   onDragEnd,
 }: {
-  project: Project;
+  item: LibraryItem;
   folders: ProjectFolder[];
-  coverUrl: string | null;
   busy: boolean;
   dragging: boolean;
-  onDuplicate: () => void;
+  onDuplicate?: () => void;
   onMove: (folderId: string | null) => void;
   onDragStart: () => void;
   onDragEnd: () => void;
 }) {
-  const social = isSocialProject(project);
-  const dubbing = isDubbingProject(project);
-  const fmt = social
-    ? getSocialAspectRatioSpec(project.socialAspectRatio)
-    : getVideoFormatSpec(project.videoFormat);
-  const folderName = folders.find((f) => f.id === project.folderId)?.name;
-  const href = projectEditorHref(project);
+  const folderName = folders.find((f) => f.id === item.folderId)?.name;
+  const badge = LIBRARY_KINDS.find((k) => k.id === item.kind)?.badge;
 
   return (
     <div
       draggable
       onDragStart={(e) => {
         e.dataTransfer.effectAllowed = "move";
-        e.dataTransfer.setData("text/x-imagine-project-id", project.id);
-        e.dataTransfer.setData("text/plain", project.title || "Project");
+        e.dataTransfer.setData("text/x-imagine-library-item", libraryItemKey(item));
+        e.dataTransfer.setData("text/plain", item.title);
         onDragStart();
       }}
       onDragEnd={onDragEnd}
@@ -485,44 +557,36 @@ function ProjectCard({
         dragging && "scale-[0.98] opacity-50 ring-2 ring-accent",
       )}
     >
-      <Link href={href} className="block">
-        <div className={cn("relative w-full overflow-hidden bg-muted", fmt.cardAspectClass)}>
-          {social ? (
+      <Link href={item.href} className="block">
+        <div className={cn("relative w-full overflow-hidden bg-muted", item.aspectClass)}>
+          {badge && (
             <span className="absolute left-2 top-2 z-10 rounded bg-background/90 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-foreground shadow-sm">
-              Post
+              {badge}
             </span>
-          ) : dubbing ? (
-            <span className="absolute left-2 top-2 z-10 rounded bg-background/90 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-foreground shadow-sm">
-              Dub
-            </span>
-          ) : null}
-          {coverUrl ? (
+          )}
+          {item.coverUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={coverUrl}
-              alt=""
+            <img src={item.coverUrl} alt="" className="h-full w-full object-cover" />
+          ) : item.coverVideoUrl ? (
+            <video
+              src={`${item.coverVideoUrl}#t=0.1`}
+              muted
+              playsInline
+              preload="metadata"
               className="h-full w-full object-cover"
             />
           ) : (
-            <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 text-2xs text-muted-foreground">
+            <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 px-3 text-center text-2xs text-muted-foreground">
               <ImageIcon className="h-5 w-5 opacity-40" />
-              <span className="font-mono">{fmt.shortLabel}</span>
-              <span className="px-3 text-center">
-                {project.genre} · {project.visualStyle}
-              </span>
+              <span className="font-mono">{item.placeholder}</span>
             </div>
           )}
         </div>
         <div className="px-2.5 py-1.5">
-          <h3 className="truncate text-xs font-medium">{project.title || "Untitled"}</h3>
-          <p className="line-clamp-1 text-2xs text-muted-foreground">{project.storyDescription}</p>
+          <h3 className="truncate text-xs font-medium">{item.title}</h3>
+          <p className="line-clamp-1 text-2xs text-muted-foreground">{item.description}</p>
           <p className="mt-0.5 truncate text-2xs text-muted-foreground/80">
-            {project.status}
-            {social
-              ? ` · ${project.postFormat}`
-              : dubbing
-                ? ` · ${(project.dubTargetLanguage ?? "?").toUpperCase()}`
-                : ` · ${project.targetDurationSeconds}s`}
+            {item.meta}
             {folderName ? ` · ${folderName}` : ""}
           </p>
         </div>
@@ -531,22 +595,20 @@ function ProjectCard({
         className="flex items-center gap-1 border-t border-border px-1.5 py-1"
         onClick={(e) => e.preventDefault()}
       >
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 shrink-0 px-2 text-2xs"
-          disabled={busy}
-          onClick={onDuplicate}
-          title="Duplicate project"
-        >
-          {busy ? (
-            <Loader2 className="h-3 w-3 animate-spin" />
-          ) : (
-            <Copy className="h-3 w-3" />
-          )}
-        </Button>
+        {onDuplicate && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 shrink-0 px-2 text-2xs"
+            disabled={busy}
+            onClick={onDuplicate}
+            title="Duplicate project"
+          >
+            {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Copy className="h-3 w-3" />}
+          </Button>
+        )}
         <Select
-          value={project.folderId ?? "__none__"}
+          value={item.folderId ?? "__none__"}
           onValueChange={(v) => onMove(v === "__none__" ? null : v)}
           disabled={busy}
         >

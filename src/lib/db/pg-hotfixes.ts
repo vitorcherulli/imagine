@@ -412,6 +412,9 @@ export const PG_SCHEMA_HOTFIXES = [
     "created_at" timestamp DEFAULT now() NOT NULL
   )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "creative_shares_token" ON "creative_shares" ("token")`,
+  `ALTER TABLE "variation_sets" ADD COLUMN IF NOT EXISTS "folder_id" text`,
+  `ALTER TABLE "image_chats" ADD COLUMN IF NOT EXISTS "folder_id" text`,
+  `ALTER TABLE "person_swaps" ADD COLUMN IF NOT EXISTS "folder_id" text`,
 ] as const;
 
 export async function applyPgSchemaHotfixes(client: postgres.Sql): Promise<void> {
