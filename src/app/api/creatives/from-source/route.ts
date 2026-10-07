@@ -17,7 +17,7 @@ import {
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-const SOURCE_TYPES = ["variation", "export", "asset", "dubbing", "image-chat"] as const;
+const SOURCE_TYPES = ["variation", "export", "asset", "dubbing", "image-chat", "swap"] as const;
 type SourceType = (typeof SOURCE_TYPES)[number];
 
 type ResolvedMedia = { url: string; name: string; language?: string; mimeType?: string };
@@ -63,6 +63,14 @@ async function resolveMedia(
       );
     const url = row ? parseImageChatUrls(row.imageUrls)[Number(index) || 0] : null;
     return url ? { url, name: row!.title } : null;
+  }
+  if (type === "swap") {
+    const [row] = await db
+      .select({ url: schema.personSwapItems.videoUrl, person: schema.personSwapItems.avatarName, name: schema.personSwaps.name })
+      .from(schema.personSwapItems)
+      .innerJoin(schema.personSwaps, eq(schema.personSwapItems.swapId, schema.personSwaps.id))
+      .where(and(eq(schema.personSwapItems.id, id), eq(schema.personSwapItems.userId, userId)));
+    return row?.url ? { url: row.url, name: row.person ? `${row.name} ${row.person}` : row.name } : null;
   }
   if (type === "asset") {
     const [row] = await db

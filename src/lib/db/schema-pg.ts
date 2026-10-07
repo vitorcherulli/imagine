@@ -250,6 +250,8 @@ export const creatives = pgTable("creatives", {
   source: text("source").notNull().default("upload"),
   sourceRef: text("source_ref"),
   status: text("status"),
+  usage: text("usage"),
+  trashedAt: timestamp("trashed_at", { mode: "date" }),
   notes: text("notes").notNull().default(""),
   createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
@@ -322,6 +324,45 @@ export const imageChatMessages = pgTable("image_chat_messages", {
   error: text("error"),
   prompt: text("prompt"),
   model: text("model"),
+  createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
+});
+
+export const personSwaps = pgTable("person_swaps", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  name: text("name").notNull(),
+  sourceUrl: text("source_url").notNull(),
+  audioUrl: text("audio_url"),
+  durationSeconds: real("duration_seconds").notNull(),
+  aspectRatio: text("aspect_ratio").notNull().default("9:16"),
+  videoModel: text("video_model"),
+  imageModel: text("image_model"),
+  mode: text("mode").notNull().default("person"),
+  scenarioId: text("scenario_id"),
+  instructions: text("instructions"),
+  voiceMode: text("voice_mode").notNull().default("original"),
+  voiceId: text("voice_id"),
+  createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
+});
+
+export const personSwapItems = pgTable("person_swap_items", {
+  id: text("id").primaryKey(),
+  swapId: text("swap_id")
+    .notNull()
+    .references(() => personSwaps.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull(),
+  avatarId: text("avatar_id"),
+  avatarName: text("avatar_name").notNull().default(""),
+  referenceUrls: text("reference_urls").notNull().default("[]"),
+  keyframeUrl: text("keyframe_url"),
+  rawVideoUrl: text("raw_video_url"),
+  videoUrl: text("video_url"),
+  voiceId: text("voice_id"),
+  status: text("status").notNull().default("frame"),
+  error: text("error"),
+  videoModel: text("video_model"),
   createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
 });
@@ -593,6 +634,8 @@ export type VariationSet = typeof variationSets.$inferSelect;
 export type VariationItem = typeof variationItems.$inferSelect;
 export type ImageChat = typeof imageChats.$inferSelect;
 export type ImageChatMessage = typeof imageChatMessages.$inferSelect;
+export type PersonSwap = typeof personSwaps.$inferSelect;
+export type PersonSwapItem = typeof personSwapItems.$inferSelect;
 export type DubbingSource = typeof dubbingSources.$inferSelect;
 export type NewDubbingSource = typeof dubbingSources.$inferInsert;
 export type DubbingSegment = typeof dubbingSegments.$inferSelect;

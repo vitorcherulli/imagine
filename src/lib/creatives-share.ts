@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { createId } from "@paralleldrive/cuid2";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db, schema } from "@/lib/db";
 import type { Creative, CreativeShare } from "@/lib/db/schema";
@@ -96,7 +96,7 @@ export async function sharedCreatives(share: CreativeShare): Promise<Creative[]>
   const rows = await db
     .select()
     .from(schema.creatives)
-    .where(eq(schema.creatives.userId, share.userId))
+    .where(and(eq(schema.creatives.userId, share.userId), isNull(schema.creatives.trashedAt)))
     .orderBy(desc(schema.creatives.code), desc(schema.creatives.version));
   return rows.filter((c) => inScope(share, c));
 }
@@ -106,7 +106,7 @@ export async function sharedCreative(share: CreativeShare, id: string): Promise<
     .select()
     .from(schema.creatives)
     .where(and(eq(schema.creatives.userId, share.userId), eq(schema.creatives.id, id)));
-  return c && inScope(share, c) ? c : null;
+  return c && !c.trashedAt && inScope(share, c) ? c : null;
 }
 
 /** Whole buffer or the requested byte range, so videos can seek. */

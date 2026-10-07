@@ -2400,3 +2400,218 @@ export async function extractAudioBufferFromVideoBuffer(input: {
   }
 }
 
+
+// -------------------------------------------------------------------------
+// Person swap helpers
+// -------------------------------------------------------------------------
+
+function probeVideoSize(filePath: string): Promise<{ width: number; height: number } | null> {
+  return new Promise((resolve) => {
+    const proc = spawn(
+      "ffprobe",
+      [
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=width,height",
+        "-of",
+        "csv=p=0:s=x",
+        filePath,
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+    let out = "";
+    proc.stdout.on("data", (chunk) => {
+      out += chunk.toString();
+    });
+    proc.on("error", () => resolve(null));
+    proc.on("close", () => {
+      const [w, h] = out.trim().split("x").map(Number);
+      resolve(w > 0 && h > 0 ? { width: w, height: h } : null);
+    });
+  });
+}
+
+export type PreparedSwapVideo = {
+  video: Buffer;
+  /** Stereo MP3 of the original soundtrack; null when the clip is silent. */
+  audio: Buffer | null;
+  durationSeconds: number;
+  width: number;
+  height: number;
+};
+
+/**
+ * Normalize an uploaded clip for video-to-video models: H.264/AAC MP4, long side ≤ 1280,
+ * ≤ 30 fps, at most `maxSeconds` long. Small enough for providers with a 16 MB input cap.
+ */
+export async function prepareSwapSourceVideo(input: {
+  buffer: Buffer;
+  filename: string;
+  maxSeconds: number;
+}): Promise<PreparedSwapVideo> {
+  if (!hasFfmpeg()) throw new Error("ffmpeg is required to prepare the video");
+  const tmpDir = path.join(
+    os.tmpdir(),
+    "imagine-swap-source",
+    `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+  );
+  await fs.mkdir(tmpDir, { recursive: true });
+  const ext = path.extname(input.filename).toLowerCase() || ".mp4";
+  const inPath = path.join(tmpDir, `in${ext}`);
+  const outPath = path.join(tmpDir, "out.mp4");
+  const audioPath = path.join(tmpDir, "audio.mp3");
+  try {
+    await fs.writeFile(inPath, input.buffer);
+    const hasAudio = await videoHasAudioStream(inPath);
+    const encode = async (crf: number) => {
+      await runFfmpeg([
+        "-y",
+        "-i",
+        inPath,
+        "-t",
+        input.maxSeconds.toFixed(3),
+        "-vf",
+        "scale='if(gt(iw,ih),min(1280,iw),-2)':'if(gt(iw,ih),-2,min(1280,ih))':flags=lanczos," +
+          "scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1,format=yuv420p",
+        "-fpsmax",
+        "30",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        String(crf),
+        ...(hasAudio ? ["-c:a", "aac", "-b:a", "128k"] : ["-an"]),
+        "-movflags",
+        "+faststart",
+        outPath,
+      ]);
+      return fs.readFile(outPath);
+    };
+    let video = await encode(23);
+    if (video.length > 15 * 1024 * 1024) video = await encode(30);
+
+    let audio: Buffer | null = null;
+    if (hasAudio) {
+      await runFfmpeg([
+        "-y",
+        "-i",
+        outPath,
+        "-vn",
+        "-ac",
+        "2",
+        "-ar",
+        "44100",
+        "-c:a",
+        "libmp3lame",
+        "-b:a",
+        "192k",
+        audioPath,
+      ]);
+      audio = await fs.readFile(audioPath);
+    }
+
+    const size = await probeVideoSize(outPath);
+    const durationSeconds = await getMediaDurationSeconds(outPath);
+    if (!size) throw new Error("Could not read the video dimensions.");
+    return { video, audio, durationSeconds, ...size };
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/** Cut an MP4 to its first `seconds` (re-encoded, so the cut is frame-exact). */
+export async function trimVideoBuffer(buffer: Buffer, seconds: number): Promise<Buffer> {
+  if (!hasFfmpeg()) throw new Error("ffmpeg is required to trim the video");
+  const tmpDir = path.join(
+    os.tmpdir(),
+    "imagine-swap-trim",
+    `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+  );
+  await fs.mkdir(tmpDir, { recursive: true });
+  const inPath = path.join(tmpDir, "in.mp4");
+  const outPath = path.join(tmpDir, "out.mp4");
+  try {
+    await fs.writeFile(inPath, buffer);
+    await runFfmpeg([
+      "-y",
+      "-i",
+      inPath,
+      "-t",
+      seconds.toFixed(3),
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-crf",
+      "23",
+      "-pix_fmt",
+      "yuv420p",
+      "-c:a",
+      "aac",
+      "-b:a",
+      "128k",
+      "-movflags",
+      "+faststart",
+      outPath,
+    ]);
+    return await fs.readFile(outPath);
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/** Drop the audio track (model output with generated sound we don't want). */
+export async function stripAudioFromVideoBuffer(buffer: Buffer): Promise<Buffer> {
+  if (!hasFfmpeg()) return buffer;
+  const tmpDir = path.join(
+    os.tmpdir(),
+    "imagine-swap-strip",
+    `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+  );
+  await fs.mkdir(tmpDir, { recursive: true });
+  const inPath = path.join(tmpDir, "in.mp4");
+  const outPath = path.join(tmpDir, "out.mp4");
+  try {
+    await fs.writeFile(inPath, buffer);
+    await runFfmpeg(["-y", "-i", inPath, "-an", "-c:v", "copy", "-movflags", "+faststart", outPath]);
+    return await fs.readFile(outPath);
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/** Scale-and-crop an image to exactly `width`×`height` as JPEG (keyframes must match the video frame). */
+export async function coverImageBufferToSize(buffer: Buffer, width: number, height: number): Promise<Buffer> {
+  if (!hasFfmpeg()) return buffer;
+  const ext = detectImageExt(buffer) ?? ".png";
+  const tmpDir = path.join(
+    os.tmpdir(),
+    "imagine-swap-cover",
+    `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+  );
+  await fs.mkdir(tmpDir, { recursive: true });
+  const inPath = path.join(tmpDir, `in${ext}`);
+  const outPath = path.join(tmpDir, "out.jpg");
+  try {
+    await fs.writeFile(inPath, buffer);
+    await runFfmpeg([
+      "-y",
+      "-i",
+      inPath,
+      "-vf",
+      buildCoverImageFilter(width, height),
+      "-frames:v",
+      "1",
+      "-q:v",
+      "2",
+      outPath,
+    ]);
+    return await fs.readFile(outPath);
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}

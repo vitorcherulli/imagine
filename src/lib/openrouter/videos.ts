@@ -14,7 +14,14 @@ export interface VideoSubmitInput {
   /** OpenRouter generate_audio — omit for provider default. */
   generateAudio?: boolean;
   frame_images?: FrameImageInput[];
+  /** Reference assets — a source video for video-to-video models, images for guidance. */
+  input_references?: VideoReferenceInput[];
+  seed?: number;
+  /** Provider passthrough keyed by provider slug; spread into the upstream body (see `allowed_passthrough_parameters`). */
+  providerOptions?: Record<string, Record<string, unknown>>;
 }
+
+export type VideoReferenceInput = { kind: "image" | "video" | "audio"; url: string };
 
 export interface VideoSubmitResult {
   id: string;
@@ -130,6 +137,14 @@ export async function submitVideo(input: VideoSubmitInput): Promise<VideoSubmitR
   if (input.frame_images && input.frame_images.length > 0) {
     body.frame_images = toApiFrameImages(input.frame_images);
   }
+  if (input.input_references && input.input_references.length > 0) {
+    body.input_references = input.input_references.map((ref) => {
+      const type = `${ref.kind}_url` as const;
+      return { type, [type]: { url: ref.url } };
+    });
+  }
+  if (input.seed !== undefined) body.seed = input.seed;
+  if (input.providerOptions) body.provider = { options: input.providerOptions };
 
   const res = await openRouterFetch("/videos", { method: "POST", json: body });
   const text = await res.text();

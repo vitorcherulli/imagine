@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { Check, ChevronDown, Film, ImageIcon, Loader2, Search, Star } from "lucide-react";
-import { isNewCatalogModel, type CatalogModel, type CatalogModelKind } from "@/lib/model-catalog";
+import { isNewCatalogModel, type CatalogModel, type CatalogModelKind, type CatalogUsage } from "@/lib/model-catalog";
 import { toggleFavoriteModel } from "@/lib/favorite-models";
 import { modelLabel, useFavoriteModels, useModelCatalog } from "@/hooks/use-model-catalog";
 import {
@@ -26,7 +26,7 @@ export function VariationModelSelect({
   value: string;
   onChange: (value: string) => void;
   label?: string;
-  usage?: "variations" | "all";
+  usage?: CatalogUsage;
   placement?: "bottom" | "top";
   /** Trigger only — no label row or favorite chips (for toolbars). */
   compact?: boolean;

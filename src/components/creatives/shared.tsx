@@ -6,8 +6,10 @@ import {
   buildAdName,
   buildCreativeName,
   isCreativeStatus,
+  isCreativeUsage,
   type CreativeFormat,
   type CreativeStatus,
+  type CreativeUsage,
   type PerformanceTrend,
 } from "@/lib/creatives";
 
@@ -22,6 +24,9 @@ export type Concept = {
   format: CreativeFormat;
   creator: string;
   manualStatus: CreativeStatus | null;
+  usage: CreativeUsage;
+  /** When the concept went to the trash; null = live. */
+  trashedAt: string | null;
   files: Creative[];
   versions: { version: number; files: Creative[] }[];
 };
@@ -47,6 +52,8 @@ export function groupConcepts(creatives: Creative[]): Concept[] {
       const versions = new Map<number, Creative[]>();
       for (const f of files) versions.set(f.version, [...(versions.get(f.version) ?? []), f]);
       const manual = files.find((f) => isCreativeStatus(f.status))?.status;
+      const usage = files.find((f) => isCreativeUsage(f.usage))?.usage;
+      const trashed = files.find((f) => f.trashedAt)?.trashedAt;
       return {
         code,
         product: head.product,
@@ -56,6 +63,8 @@ export function groupConcepts(creatives: Creative[]): Concept[] {
         format: head.format as CreativeFormat,
         creator: head.creator,
         manualStatus: isCreativeStatus(manual) ? manual : null,
+        usage: isCreativeUsage(usage) ? usage : "unused",
+        trashedAt: trashed ? new Date(trashed).toISOString() : null,
         files,
         versions: [...versions.entries()]
           .sort(([a], [b]) => b - a)

@@ -279,6 +279,34 @@ export async function deleteImageChatMedia(userId: string, chatId: string): Prom
   await deleteMediaPrefix(path.posix.join("generated", "_image-chats", userId, chatId));
 }
 
+export async function savePersonSwapBuffer(
+  userId: string,
+  swapId: string,
+  filename: string,
+  buf: Buffer,
+): Promise<string> {
+  const key = path.posix.join("generated", "_person-swaps", userId, swapId, filename);
+  return writeBytes(key, buf);
+}
+
+export async function deletePersonSwapMedia(userId: string, swapId: string): Promise<void> {
+  await deleteMediaPrefix(path.posix.join("generated", "_person-swaps", userId, swapId));
+}
+
+/**
+ * URL a provider can download: the public app URL in production, otherwise an inline data URL
+ * (localhost isn't reachable from outside).
+ */
+export async function readMediaForProvider(publicUrl: string, mime: string): Promise<string> {
+  const pathOnly = publicUrl.split("?")[0]?.split("#")[0] ?? publicUrl;
+  if (isRemoteMediaUrl(pathOnly)) return pathOnly;
+  const base = publicAppBaseUrl();
+  if (base && pathOnly.startsWith("/api/media/")) return `${base}${pathOnly}`;
+  if (mime.startsWith("image/")) return readImageAsDataUrl(publicUrl);
+  const buf = await readMediaBuffer(publicUrl);
+  return `data:${mime};base64,${buf.toString("base64")}`;
+}
+
 export async function saveGalleryBuffer(
   userId: string,
   filename: string,
@@ -322,6 +350,11 @@ export async function readImageAsDataUrl(publicUrl: string): Promise<string> {
           ? "image/gif"
           : "image/png";
   return `data:${mime};base64,${buf.toString("base64")}`;
+}
+
+/** Whether outside services (video AIs) can download our media by URL. */
+export function hasPublicMediaUrl(): boolean {
+  return publicAppBaseUrl() !== null;
 }
 
 function publicAppBaseUrl(): string | null {

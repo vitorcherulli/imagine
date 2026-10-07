@@ -17,6 +17,7 @@ import {
   Megaphone,
   MessagesSquare,
   Mountain,
+  UserRoundCog,
   UserSquare,
   Wand2,
 } from "lucide-react";
@@ -258,6 +259,13 @@ export function Sidebar({
               icon={<MessagesSquare className="h-3.5 w-3.5" />}
             />
             <SidebarNavLink
+              href="/swap"
+              title="Person swap — put another person in a video"
+              label="Person swap"
+              active={pathname?.startsWith("/swap")}
+              icon={<UserRoundCog className="h-3.5 w-3.5" />}
+            />
+            <SidebarNavLink
               href="/creatives"
               title="Creatives — ad library, naming and results"
               label="Creatives"
@@ -333,6 +341,14 @@ export function Sidebar({
             collapsed
             active={pathname?.startsWith("/image-chat")}
             icon={<MessagesSquare className="h-4 w-4" />}
+          />
+          <SidebarNavLink
+            href="/swap"
+            title="Person swap"
+            label="Person swap"
+            collapsed
+            active={pathname?.startsWith("/swap")}
+            icon={<UserRoundCog className="h-4 w-4" />}
           />
           <SidebarNavLink
             href="/creatives"

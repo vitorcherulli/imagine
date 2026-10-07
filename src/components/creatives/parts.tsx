@@ -1,13 +1,13 @@
 "use client";
 
 import * as React from "react";
-import { Copy, Download, Pencil, Play, Sparkles, Trash2 } from "lucide-react";
+import { Copy, Download, Pencil, Play, Sparkles, Trash2, UserRoundCog } from "lucide-react";
 import type { Creative } from "@/lib/db/schema";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { CREATIVE_STATUSES, type CreativeStatus } from "@/lib/creatives";
+import { CREATIVE_STATUSES, CREATIVE_USAGES, type CreativeStatus, type CreativeUsage } from "@/lib/creatives";
 import { adNameOf, fmtDuration, nameOf, type Concept } from "@/components/creatives/shared";
 
 export type ConceptStatus = { status: CreativeStatus; suggested: boolean };
@@ -48,6 +48,63 @@ export function StatusSelect({ concept, onChange }: { concept: Concept; onChange
             {label}
           </SelectItem>
         ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+export const USAGE_DOT: Record<CreativeUsage, string> = {
+  unused: "bg-muted-foreground/40",
+  used: "bg-accent",
+  published: "bg-success",
+  old: "bg-warning",
+};
+
+const TRASH_VALUE = "__trash";
+
+export function UsageSelect({
+  concept,
+  onChange,
+  onTrash,
+  className,
+}: {
+  concept: Concept;
+  onChange: (v: CreativeUsage) => void;
+  onTrash?: () => void;
+  className?: string;
+}) {
+  return (
+    <Select
+      value={concept.usage}
+      onValueChange={(v) => (v === TRASH_VALUE ? onTrash?.() : onChange(v as CreativeUsage))}
+    >
+      <SelectTrigger
+        className={cn("h-7 w-[112px] px-2 text-xs", className)}
+        title="Mark as not used, used, published or old"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent onClick={(e) => e.stopPropagation()}>
+        {(Object.entries(CREATIVE_USAGES) as [CreativeUsage, string][]).map(([k, label]) => (
+          <SelectItem key={k} value={k}>
+            <span className="flex items-center gap-1.5">
+              <span className={cn("h-2 w-2 shrink-0 rounded-full", USAGE_DOT[k])} />
+              {label}
+            </span>
+          </SelectItem>
+        ))}
+        {onTrash ? (
+          <>
+            <div className="-mx-1 my-1 h-px bg-border" />
+            <SelectItem value={TRASH_VALUE} className="text-destructive focus:text-destructive">
+              <span className="flex items-center gap-1.5">
+                <Trash2 className="h-3 w-3 shrink-0" />
+                Move to trash
+              </span>
+            </SelectItem>
+          </>
+        ) : null}
       </SelectContent>
     </Select>
   );
@@ -110,7 +167,14 @@ export function FileThumb({
           <ThumbAction title="Generate variations" onClick={() => actions.onVariations(f)}>
             <Sparkles className="h-3.5 w-3.5" />
           </ThumbAction>
-        ) : null}
+        ) : (
+          <ThumbAction
+            title="Swap person — same video with another person"
+            href={`/swap?source=${encodeURIComponent(f.fileUrl)}&name=${encodeURIComponent(nameOf(f).replace(/\.[^.]+$/, ""))}`}
+          >
+            <UserRoundCog className="h-3.5 w-3.5" />
+          </ThumbAction>
+        )}
         <ThumbAction title="Edit file" onClick={() => actions.onEditFile(f)}>
           <Pencil className="h-3.5 w-3.5" />
         </ThumbAction>

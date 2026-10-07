@@ -1,21 +1,21 @@
 "use client";
 
 import * as React from "react";
-import { catalogFallback, type CatalogModel, type CatalogModelKind } from "@/lib/model-catalog";
+import { catalogFallback, type CatalogModel, type CatalogModelKind, type CatalogUsage } from "@/lib/model-catalog";
 import { loadFavoriteModels, subscribeFavoriteModels, type FavoriteModels } from "@/lib/favorite-models";
 
 const pending = new Map<string, Promise<CatalogModel[]>>();
 
-function loadCatalog(kind: CatalogModelKind, usage: string): Promise<CatalogModel[]> {
+function loadCatalog(kind: CatalogModelKind, usage: CatalogUsage): Promise<CatalogModel[]> {
   const key = `${kind}:${usage}`;
   let p = pending.get(key);
   if (!p) {
     p = fetch(`/api/models/catalog?kind=${kind}&for=${usage}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
-      .then((d: { models?: CatalogModel[] }) => (d.models?.length ? d.models : catalogFallback(kind)))
+      .then((d: { models?: CatalogModel[] }) => (d.models?.length ? d.models : catalogFallback(kind, usage)))
       .catch(() => {
         pending.delete(key);
-        return catalogFallback(kind);
+        return catalogFallback(kind, usage);
       });
     pending.set(key, p);
   }
@@ -25,9 +25,9 @@ function loadCatalog(kind: CatalogModelKind, usage: string): Promise<CatalogMode
 /** Live OpenRouter catalog (shared across components), with the built-in list while loading. */
 export function useModelCatalog(
   kind: CatalogModelKind,
-  usage: "variations" | "all" = "variations",
+  usage: CatalogUsage = "variations",
 ): { models: CatalogModel[]; loading: boolean } {
-  const [models, setModels] = React.useState<CatalogModel[]>(() => catalogFallback(kind));
+  const [models, setModels] = React.useState<CatalogModel[]>(() => catalogFallback(kind, usage));
   const [loading, setLoading] = React.useState(true);
   React.useEffect(() => {
     let alive = true;

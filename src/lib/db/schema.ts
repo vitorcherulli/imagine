@@ -328,6 +328,10 @@ export const creatives = sqliteTable("creatives", {
   sourceRef: text("source_ref"),
   /** Manual override; null = suggested from Meta metrics. */
   status: text("status"),
+  /** unused | used | published | old — null = not used yet. */
+  usage: text("usage"),
+  /** Set = in the trash (whole concept); purged after CREATIVE_TRASH_DAYS. */
+  trashedAt: integer("trashed_at", { mode: "timestamp" }),
   notes: text("notes").notNull().default(""),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
@@ -423,6 +427,63 @@ export const imageChatMessages = sqliteTable("image_chat_messages", {
   error: text("error"),
   prompt: text("prompt"),
   model: text("model"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+/** Person swap: one source video, re-cast with one or more avatars. */
+export const personSwaps = sqliteTable("person_swaps", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  name: text("name").notNull(),
+  /** Prepared copy (H.264, ≤ 720p, ≤ 30 s). */
+  sourceUrl: text("source_url").notNull(),
+  /** Original soundtrack (mp3); null when the video is silent. */
+  audioUrl: text("audio_url"),
+  durationSeconds: real("duration_seconds").notNull(),
+  aspectRatio: text("aspect_ratio").notNull().default("9:16"),
+  videoModel: text("video_model"),
+  imageModel: text("image_model"),
+  /** person = only the person changes · scene = person and background change */
+  mode: text("mode").notNull().default("person"),
+  scenarioId: text("scenario_id"),
+  instructions: text("instructions"),
+  /** original = keep the voice in the video · voice = convert it to voiceId (ElevenLabs) */
+  voiceMode: text("voice_mode").notNull().default("original"),
+  voiceId: text("voice_id"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+export const personSwapItems = sqliteTable("person_swap_items", {
+  id: text("id").primaryKey(),
+  swapId: text("swap_id")
+    .notNull()
+    .references(() => personSwaps.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull(),
+  avatarId: text("avatar_id"),
+  avatarName: text("avatar_name").notNull().default(""),
+  /** JSON array of the avatar photos used as references. */
+  referenceUrls: text("reference_urls").notNull().default("[]"),
+  /** First frame with the new person — guides the video model. */
+  keyframeUrl: text("keyframe_url"),
+  /** Video as returned by the model, before our audio pass. */
+  rawVideoUrl: text("raw_video_url"),
+  videoUrl: text("video_url"),
+  /** Voice applied to videoUrl; null = original voice. */
+  voiceId: text("voice_id"),
+  /** frame | video | voice | ready | error */
+  status: text("status").notNull().default("frame"),
+  error: text("error"),
+  videoModel: text("video_model"),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .default(sql`(unixepoch())`),
@@ -750,6 +811,8 @@ export type VariationSet = typeof variationSets.$inferSelect;
 export type VariationItem = typeof variationItems.$inferSelect;
 export type ImageChat = typeof imageChats.$inferSelect;
 export type ImageChatMessage = typeof imageChatMessages.$inferSelect;
+export type PersonSwap = typeof personSwaps.$inferSelect;
+export type PersonSwapItem = typeof personSwapItems.$inferSelect;
 export type DubbingSource = typeof dubbingSources.$inferSelect;
 export type NewDubbingSource = typeof dubbingSources.$inferInsert;
 export type DubbingSegment = typeof dubbingSegments.$inferSelect;

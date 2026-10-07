@@ -1,6 +1,8 @@
 import { openRouterFetch } from "@/lib/openrouter/client";
 import {
   catalogFallback,
+  isVideoEditModel,
+  PERSON_SWAP_MODELS,
   type CatalogModel,
   type CatalogModelKind,
 } from "@/lib/model-catalog";
@@ -82,6 +84,7 @@ function mapVideo(m: RawVideoModel): CatalogModel {
     aspectRatios: m.supported_aspect_ratios ?? null,
     durations: m.supported_durations ?? null,
     frameImages: m.supported_frame_images ?? null,
+    videoInput: isVideoEditModel(m.id, m.pricing_skus),
   };
 }
 
@@ -128,4 +131,17 @@ export function filterVariationCapable(kind: CatalogModelKind, models: CatalogMo
     return models.filter((m) => m.maxReferences === undefined || m.maxReferences === null || m.maxReferences >= 1);
   }
   return models.filter((m) => m.created === 0 || m.frameImages?.includes("first_frame"));
+}
+
+/** Video editors for Person swap: curated descriptions first, then any other video-input model. */
+export function filterSwapCapable(models: CatalogModel[]): CatalogModel[] {
+  const live = new Map(models.filter((m) => m.videoInput).map((m) => [m.value, m]));
+  if (live.size === 0) return PERSON_SWAP_MODELS;
+  const curated = PERSON_SWAP_MODELS.filter((m) => live.has(m.value)).map((m) => ({
+    ...live.get(m.value)!,
+    description: m.description,
+    priceHint: live.get(m.value)!.priceHint ?? m.priceHint,
+  }));
+  const rest = [...live.values()].filter((m) => !PERSON_SWAP_MODELS.some((c) => c.value === m.value));
+  return [...curated, ...rest];
 }

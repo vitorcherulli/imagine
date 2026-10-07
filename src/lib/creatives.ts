@@ -34,6 +34,21 @@ export const CREATIVE_STATUSES = {
 } as const;
 export type CreativeStatus = keyof typeof CREATIVE_STATUSES;
 
+/** Whether the concept was used, independent of how it performs. */
+export const CREATIVE_USAGES = {
+  unused: "Not used",
+  used: "Used",
+  published: "Published",
+  old: "Old",
+} as const;
+export type CreativeUsage = keyof typeof CREATIVE_USAGES;
+
+export const CREATIVE_TRASH_DAYS = 30;
+
+export function isCreativeUsage(v: unknown): v is CreativeUsage {
+  return typeof v === "string" && v in CREATIVE_USAGES;
+}
+
 export const DEFAULT_MIN_SPEND = 100;
 
 /** C = criativo. Names with the earlier P prefix are still recognized. */

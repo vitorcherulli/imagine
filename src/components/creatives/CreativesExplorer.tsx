@@ -18,6 +18,7 @@ import {
   List,
   Pencil,
   Plus,
+  RotateCcw,
   Trash2,
   Trophy,
   Upload,
@@ -26,7 +27,15 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { creativeCode, periodLabel, type PerformanceTrend } from "@/lib/creatives";
+import {
+  CREATIVE_TRASH_DAYS,
+  CREATIVE_USAGES,
+  creativeCode,
+  isCreativeUsage,
+  periodLabel,
+  type CreativeUsage,
+  type PerformanceTrend,
+} from "@/lib/creatives";
 import {
   StatusBadge,
   TrendBadge,
@@ -42,6 +51,8 @@ import {
   CONCEPT_DRAG_TYPE,
   FileThumb,
   StatusSelect,
+  USAGE_DOT,
+  UsageSelect,
   coverOf,
   type ConceptStatus,
   type FileActions,
@@ -53,7 +64,9 @@ export type Loc =
   | { kind: "root" }
   | { kind: "folder"; folder: string }
   | { kind: "concept"; code: number }
-  | { kind: "smart"; id: SmartId };
+  | { kind: "smart"; id: SmartId }
+  | { kind: "usage"; usage: CreativeUsage }
+  | { kind: "trash" };
 export type LibraryView = "grid" | "list";
 
 const SMART: Record<SmartId, { label: string; icon: React.ElementType; empty: string }> = {
@@ -68,11 +81,16 @@ const SMART: Record<SmartId, { label: string; icon: React.ElementType; empty: st
   archived: { label: "Archived", icon: Archive, empty: "Nothing archived." },
 };
 
+const USAGE_ORDER: CreativeUsage[] = ["published", "used", "unused", "old"];
+
 export function locFromParams(sp: URLSearchParams): Loc {
   const code = Number(sp.get("c"));
   if (Number.isInteger(code) && code > 0) return { kind: "concept", code };
   const smart = sp.get("v");
   if (smart && smart in SMART) return { kind: "smart", id: smart as SmartId };
+  const usage = sp.get("u");
+  if (isCreativeUsage(usage)) return { kind: "usage", usage };
+  if (sp.has("trash")) return { kind: "trash" };
   const folder = sp.get("f");
   if (folder) return { kind: "folder", folder };
   return { kind: "root" };
@@ -81,12 +99,19 @@ export function locFromParams(sp: URLSearchParams): Loc {
 export function locToSearch(loc: Loc): string {
   if (loc.kind === "concept") return `?c=${loc.code}`;
   if (loc.kind === "smart") return `?v=${loc.id}`;
+  if (loc.kind === "usage") return `?u=${loc.usage}`;
+  if (loc.kind === "trash") return "?trash";
   if (loc.kind === "folder") return `?f=${encodeURIComponent(loc.folder)}`;
   return "";
 }
 
 export type ConceptActions = {
   onStatus: (c: Concept, value: string) => void;
+  onUsage: (c: Concept, value: CreativeUsage) => void;
+  onTrash: (c: Concept) => void;
+  onRestore: (c: Concept) => void;
+  onDeleteForever: (c: Concept) => void;
+  onEmptyTrash: () => void;
   onEdit: (c: Concept) => void;
   onNewVersion: (c: Concept) => void;
 };
@@ -101,6 +126,7 @@ export type FolderActions = {
 type Props = {
   library: CreativeLibrary;
   concepts: Concept[];
+  trash: Concept[];
   statusOf: (c: Concept) => ConceptStatus;
   trendOf: (c: Concept) => PerformanceTrend | null;
   hasMetrics: boolean;
@@ -160,8 +186,12 @@ export function CreativesExplorer(props: Props) {
           ? active.filter((c) => !library.performance[c.code])
           : active.filter((c) => conceptGaps(c)[id]);
   const smartIds = (Object.keys(SMART) as SmartId[]).filter((id) => id !== "untested" || props.hasMetrics);
+  const usageList = (u: CreativeUsage): Concept[] => concepts.filter((c) => c.usage === u);
 
-  const concept = loc.kind === "concept" ? concepts.find((c) => c.code === loc.code) : undefined;
+  const concept =
+    loc.kind === "concept"
+      ? concepts.find((c) => c.code === loc.code) ?? props.trash.find((c) => c.code === loc.code)
+      : undefined;
   const currentFolder = loc.kind === "folder" ? loc.folder : concept?.product ?? null;
 
   const q = query.trim().toLowerCase();
@@ -183,6 +213,8 @@ export function CreativesExplorer(props: Props) {
         currentFolder={currentFolder}
         navigate={navigate}
         smartCounts={Object.fromEntries(smartIds.map((id) => [id, smartList(id).length]))}
+        usageCounts={Object.fromEntries(USAGE_ORDER.map((u) => [u, usageList(u).length]))}
+        trashCount={props.trash.length}
         folderActions={props.folderActions}
       />
 
@@ -203,6 +235,23 @@ export function CreativesExplorer(props: Props) {
             />
             <ConceptCollection {...props} list={smartList(loc.id)} showFolder empty={SMART[loc.id].empty} />
           </>
+        ) : loc.kind === "usage" ? (
+          <>
+            <Breadcrumb
+              items={[
+                { label: "Creatives", onClick: () => navigate({ kind: "root" }) },
+                { label: CREATIVE_USAGES[loc.usage] },
+              ]}
+            />
+            <ConceptCollection
+              {...props}
+              list={usageList(loc.usage)}
+              showFolder
+              empty={`Nothing marked as “${CREATIVE_USAGES[loc.usage]}”.`}
+            />
+          </>
+        ) : loc.kind === "trash" ? (
+          <TrashView {...props} />
         ) : concept ? (
           <ConceptDetail {...props} concept={concept} />
         ) : (
@@ -228,6 +277,8 @@ function FolderTree({
   currentFolder,
   navigate,
   smartCounts,
+  usageCounts,
+  trashCount,
   folderActions,
 }: {
   folders: string[];
@@ -236,6 +287,8 @@ function FolderTree({
   currentFolder: string | null;
   navigate: (loc: Loc) => void;
   smartCounts: Record<string, number>;
+  usageCounts: Record<string, number>;
+  trashCount: number;
   folderActions: FolderActions;
 }) {
   const [creating, setCreating] = React.useState(false);
@@ -323,6 +376,34 @@ function FolderTree({
             />
           );
         })}
+      </nav>
+
+      <nav className="space-y-0.5 border-t border-border pt-2">
+        <p className="px-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Usage</p>
+        {USAGE_ORDER.map((u) => (
+          <TreeRow
+            key={u}
+            icon={
+              <span className="flex h-3.5 w-3.5 items-center justify-center">
+                <span className={cn("h-2 w-2 rounded-full", USAGE_DOT[u])} />
+              </span>
+            }
+            label={CREATIVE_USAGES[u]}
+            count={usageCounts[u] ?? 0}
+            active={loc.kind === "usage" && loc.usage === u}
+            onClick={() => navigate({ kind: "usage", usage: u })}
+          />
+        ))}
+      </nav>
+
+      <nav className="border-t border-border pt-2">
+        <TreeRow
+          icon={<Trash2 className="h-3.5 w-3.5" />}
+          label="Trash"
+          count={trashCount}
+          active={loc.kind === "trash"}
+          onClick={() => navigate({ kind: "trash" })}
+        />
       </nav>
     </aside>
   );
@@ -944,6 +1025,89 @@ function FolderView(props: Props & { folder: string; list: Concept[] }) {
   );
 }
 
+function trashDaysLeft(trashedAt: string): string {
+  const left = Math.ceil(CREATIVE_TRASH_DAYS - (Date.now() - new Date(trashedAt).getTime()) / 86_400_000);
+  return left <= 1 ? "deleted for good within a day" : `deleted for good in ${left} days`;
+}
+
+function TrashView(props: Props) {
+  const { trash, navigate, conceptActions } = props;
+  return (
+    <>
+      <Breadcrumb
+        items={[{ label: "Creatives", onClick: () => navigate({ kind: "root" }) }, { label: "Trash" }]}
+        actions={
+          trash.length ? (
+            <Button size="sm" variant="destructive" onClick={conceptActions.onEmptyTrash}>
+              <Trash2 className="h-3.5 w-3.5" /> Empty trash
+            </Button>
+          ) : null
+        }
+      />
+      <p className="text-2xs text-muted-foreground">
+        Concepts in the trash are hidden from folders, views and share links, and are deleted for good after{" "}
+        {CREATIVE_TRASH_DAYS} days.
+      </p>
+      {trash.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-border p-8 text-center text-xs text-muted-foreground">
+          The trash is empty.
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
+          {trash.map((c) => {
+            const cover = coverOf(c);
+            return (
+              <div key={c.code} className="flex flex-col overflow-hidden rounded-lg border border-border bg-panel">
+                <button
+                  type="button"
+                  onClick={() => navigate({ kind: "concept", code: c.code })}
+                  className="text-left"
+                  title="Open"
+                >
+                  <div className="relative aspect-[4/5] bg-muted">
+                    {cover.thumbUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={cover.thumbUrl}
+                        alt=""
+                        className="h-full w-full object-cover opacity-60 grayscale"
+                        loading="lazy"
+                      />
+                    ) : null}
+                    <span className="absolute left-1.5 top-1.5 rounded bg-background/90 px-1.5 font-mono text-2xs font-semibold leading-5">
+                      {creativeCode(c.code)}
+                    </span>
+                  </div>
+                  <div className="space-y-0.5 px-2.5 py-2">
+                    <p className="truncate text-sm font-medium">{c.angle}</p>
+                    <p className="truncate text-2xs text-muted-foreground">
+                      {c.product} · {c.trashedAt ? trashDaysLeft(c.trashedAt) : ""}
+                    </p>
+                  </div>
+                </button>
+                <div className="mt-auto flex gap-1 px-2.5 pb-2">
+                  <Button size="xs" className="flex-1" onClick={() => conceptActions.onRestore(c)}>
+                    <RotateCcw className="h-3 w-3" /> Restore
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    className="text-destructive"
+                    title="Delete forever"
+                    onClick={() => conceptActions.onDeleteForever(c)}
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </>
+  );
+}
+
 function ConceptCollection(props: Props & { list: Concept[]; showFolder?: boolean; empty: string }) {
   const { list, showFolder, empty, view, statusOf, hasMetrics, navigate, library } = props;
   if (!list.length) {
@@ -966,6 +1130,8 @@ function ConceptCollection(props: Props & { list: Concept[]; showFolder?: boolea
           perf={library.performance[c.code]}
           trend={props.trendOf(c)}
           onOpen={() => navigate({ kind: "concept", code: c.code })}
+          onUsage={(u) => props.conceptActions.onUsage(c, u)}
+          onTrash={() => props.conceptActions.onTrash(c)}
         />
       ))}
     </div>
@@ -980,6 +1146,8 @@ function ConceptTile({
   perf,
   trend,
   onOpen,
+  onUsage,
+  onTrash,
 }: {
   concept: Concept;
   status: ConceptStatus;
@@ -988,61 +1156,68 @@ function ConceptTile({
   perf: CreativeLibrary["performance"][number] | undefined;
   trend: PerformanceTrend | null;
   onOpen: () => void;
+  onUsage: (u: CreativeUsage) => void;
+  onTrash: () => void;
 }) {
   const cover = coverOf(c);
   const gaps = conceptGaps(c);
   return (
-    <button
-      type="button"
+    <div
       draggable
       onDragStart={(e) => {
         e.dataTransfer.setData(CONCEPT_DRAG_TYPE, String(c.code));
         e.dataTransfer.effectAllowed = "move";
       }}
-      onClick={onOpen}
-      className="group overflow-hidden rounded-lg border border-border bg-panel text-left transition-colors hover:border-accent/60"
-      title="Open · drag onto a folder to move"
+      className={cn(
+        "group flex flex-col overflow-hidden rounded-lg border border-border bg-panel transition-colors hover:border-accent/60",
+        c.usage === "old" && "opacity-60 hover:opacity-100",
+      )}
     >
-      <div className="relative aspect-[4/5] bg-muted">
-        {cover.thumbUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={cover.thumbUrl} alt="" className="h-full w-full object-cover" loading="lazy" draggable={false} />
-        ) : null}
-        <span className="absolute left-1.5 top-1.5 rounded bg-background/90 px-1.5 font-mono text-2xs font-semibold leading-5">
-          {creativeCode(c.code)}
-        </span>
-        {showStatus ? (
-          <span className="absolute right-1.5 top-1.5">
-            <StatusBadge status={status.status} suggested={status.suggested} />
+      <button type="button" onClick={onOpen} className="text-left" title="Open · drag onto a folder to move">
+        <div className="relative aspect-[4/5] bg-muted">
+          {cover.thumbUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={cover.thumbUrl} alt="" className="h-full w-full object-cover" loading="lazy" draggable={false} />
+          ) : null}
+          <span className="absolute left-1.5 top-1.5 rounded bg-background/90 px-1.5 font-mono text-2xs font-semibold leading-5">
+            {creativeCode(c.code)}
           </span>
-        ) : null}
-        {gaps.feed || gaps.story ? (
-          <span className="absolute bottom-1.5 left-1.5 flex items-center gap-0.5 rounded bg-background/90 px-1 text-[10px] leading-4 text-warning">
-            <AlertTriangle className="h-2.5 w-2.5" />
-            needs {[gaps.feed && "4:5", gaps.story && "9:16"].filter(Boolean).join(" · ")}
-          </span>
-        ) : null}
-        {trend && (trend.fatigue || trend.improving) ? (
-          <span className="absolute bottom-1.5 right-1.5">
-            <TrendBadge trend={trend} />
-          </span>
-        ) : null}
-      </div>
-      <div className="space-y-0.5 px-2.5 py-2">
-        <p className="truncate text-sm font-medium">{c.angle}</p>
-        <p className="truncate text-2xs text-muted-foreground">
-          {showFolder ? `${c.product} · ` : ""}
-          {c.format}
-          {c.format === "UGC" && c.creator ? ` · ${c.creator}` : ""} · {c.versions.length} version
-          {c.versions.length > 1 ? "s" : ""} · {c.files.length} file{c.files.length > 1 ? "s" : ""}
-        </p>
-        {perf ? (
+          {showStatus ? (
+            <span className="absolute right-1.5 top-1.5">
+              <StatusBadge status={status.status} suggested={status.suggested} />
+            </span>
+          ) : null}
+          {gaps.feed || gaps.story ? (
+            <span className="absolute bottom-1.5 left-1.5 flex items-center gap-0.5 rounded bg-background/90 px-1 text-[10px] leading-4 text-warning">
+              <AlertTriangle className="h-2.5 w-2.5" />
+              needs {[gaps.feed && "4:5", gaps.story && "9:16"].filter(Boolean).join(" · ")}
+            </span>
+          ) : null}
+          {trend && (trend.fatigue || trend.improving) ? (
+            <span className="absolute bottom-1.5 right-1.5">
+              <TrendBadge trend={trend} />
+            </span>
+          ) : null}
+        </div>
+        <div className="space-y-0.5 px-2.5 py-2">
+          <p className="truncate text-sm font-medium">{c.angle}</p>
           <p className="truncate text-2xs text-muted-foreground">
-            {fmtMoney(perf.spend)} · {fmtMoney(perf.cpa)}/result · CTR {fmtPct(perf.ctr)}
+            {showFolder ? `${c.product} · ` : ""}
+            {c.format}
+            {c.format === "UGC" && c.creator ? ` · ${c.creator}` : ""} · {c.versions.length} version
+            {c.versions.length > 1 ? "s" : ""} · {c.files.length} file{c.files.length > 1 ? "s" : ""}
           </p>
-        ) : null}
+          {perf ? (
+            <p className="truncate text-2xs text-muted-foreground">
+              {fmtMoney(perf.spend)} · {fmtMoney(perf.cpa)}/result · CTR {fmtPct(perf.ctr)}
+            </p>
+          ) : null}
+        </div>
+      </button>
+      <div className="mt-auto px-2.5 pb-2">
+        <UsageSelect concept={c} onChange={onUsage} onTrash={onTrash} className="h-6 w-full text-2xs" />
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -1056,6 +1231,7 @@ function ConceptTable(props: Props & { list: Concept[] }) {
             <th className="w-12 px-2 py-1.5" />
             <th className="px-2 py-1.5 text-left font-medium">Concept</th>
             <th className="px-2 py-1.5 text-left font-medium">Latest version · sizes</th>
+            <th className="px-2 py-1.5 text-left font-medium">Usage</th>
             <th className="px-2 py-1.5 text-left font-medium">Status</th>
             {hasMetrics ? (
               <>
@@ -1111,6 +1287,13 @@ function ConceptTable(props: Props & { list: Concept[] }) {
                     {gaps.feed ? <Badge variant="outline" className="border-dashed text-warning">+4:5</Badge> : null}
                     {gaps.story ? <Badge variant="outline" className="border-dashed text-warning">+9:16</Badge> : null}
                   </div>
+                </td>
+                <td className="px-2 py-1.5" onClick={(e) => e.stopPropagation()}>
+                  <UsageSelect
+                    concept={c}
+                    onChange={(u) => conceptActions.onUsage(c, u)}
+                    onTrash={() => conceptActions.onTrash(c)}
+                  />
                 </td>
                 <td className="px-2 py-1.5" onClick={(e) => e.stopPropagation()}>
                   <div className="flex items-center gap-1">
@@ -1222,25 +1405,51 @@ function ConceptDetail(props: Props & { concept: Concept }) {
           { label: `${creativeCode(c.code)} · ${c.angle}` },
         ]}
         actions={
-          <>
-            <StatusSelect concept={c} onChange={(v) => conceptActions.onStatus(c, v)} />
-            <Button
-              size="sm"
-              onClick={() =>
-                props.onShare({ scope: "concept", value: String(c.code), label: `${creativeCode(c.code)} · ${c.angle}` })
-              }
-            >
-              <Link2 className="h-3.5 w-3.5" /> Share
-            </Button>
-            <Button size="sm" onClick={() => conceptActions.onEdit(c)}>
-              <Pencil className="h-3.5 w-3.5" /> Edit
-            </Button>
-            <Button size="sm" variant="primary" onClick={() => conceptActions.onNewVersion(c)}>
-              <Plus className="h-3.5 w-3.5" /> New version
-            </Button>
-          </>
+          c.trashedAt ? (
+            <>
+              <Button size="sm" onClick={() => conceptActions.onRestore(c)}>
+                <RotateCcw className="h-3.5 w-3.5" /> Restore
+              </Button>
+              <Button size="sm" variant="destructive" onClick={() => conceptActions.onDeleteForever(c)}>
+                <Trash2 className="h-3.5 w-3.5" /> Delete forever
+              </Button>
+            </>
+          ) : (
+            <>
+              <UsageSelect
+                concept={c}
+                onChange={(u) => conceptActions.onUsage(c, u)}
+                onTrash={() => {
+                  conceptActions.onTrash(c);
+                  navigate({ kind: "folder", folder: c.product });
+                }}
+              />
+              <StatusSelect concept={c} onChange={(v) => conceptActions.onStatus(c, v)} />
+              <Button
+                size="sm"
+                onClick={() =>
+                  props.onShare({ scope: "concept", value: String(c.code), label: `${creativeCode(c.code)} · ${c.angle}` })
+                }
+              >
+                <Link2 className="h-3.5 w-3.5" /> Share
+              </Button>
+              <Button size="sm" onClick={() => conceptActions.onEdit(c)}>
+                <Pencil className="h-3.5 w-3.5" /> Edit
+              </Button>
+              <Button size="sm" variant="primary" onClick={() => conceptActions.onNewVersion(c)}>
+                <Plus className="h-3.5 w-3.5" /> New version
+              </Button>
+            </>
+          )
         }
       />
+
+      {c.trashedAt ? (
+        <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs">
+          <Trash2 className="h-3.5 w-3.5 shrink-0 text-destructive" />
+          In the trash — {trashDaysLeft(c.trashedAt)}. Restore it to use it again.
+        </div>
+      ) : null}
 
       <section className="space-y-1 rounded-lg border border-border bg-panel px-3 py-2.5">
         <div className="flex flex-wrap items-center gap-1.5">

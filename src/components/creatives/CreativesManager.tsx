@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/use-toast";
 import {
+  CREATIVE_TRASH_DAYS,
   DEFAULT_MIN_SPEND,
   comparePerformance,
   creativeCode,
@@ -91,7 +92,9 @@ export function CreativesManager({ initial }: { initial: CreativeLibrary }) {
   }, []);
 
   const hasMetrics = library.metrics.rows > 0;
-  const concepts = React.useMemo(() => groupConcepts(library.creatives), [library.creatives]);
+  const allConcepts = React.useMemo(() => groupConcepts(library.creatives), [library.creatives]);
+  const concepts = React.useMemo(() => allConcepts.filter((c) => !c.trashedAt), [allConcepts]);
+  const trash = React.useMemo(() => allConcepts.filter((c) => c.trashedAt), [allConcepts]);
   const products = React.useMemo(
     () => [...new Set([...library.folders, ...concepts.map((c) => c.product)])].sort(),
     [library.folders, concepts],
@@ -138,6 +141,17 @@ export function CreativesManager({ initial }: { initial: CreativeLibrary }) {
     setBulkOpen(true);
   }
 
+  function setTrashed(code: number, trashed: boolean) {
+    const trashedAt = trashed ? new Date() : null;
+    setLibrary((lib) => ({
+      ...lib,
+      creatives: lib.creatives.map((f) => (f.code === code ? { ...f, trashedAt } : f)),
+    }));
+    sendJson(`/api/creatives/concepts/${code}`, "PATCH", { trashed })
+      .catch((e) => fail("Could not update", e))
+      .finally(() => void refresh());
+  }
+
   const fileActions: FileActions = {
     onAddSize: (f) => setUpload({ mode: "size", base: f }),
     onEditFile: setEditFile,
@@ -157,6 +171,47 @@ export function CreativesManager({ initial }: { initial: CreativeLibrary }) {
       sendJson(`/api/creatives/concepts/${c.code}`, "PATCH", { status: value === "auto" ? null : value })
         .then(refresh)
         .catch((e) => fail("Could not update", e));
+    },
+    onUsage: (c, usage) => {
+      setLibrary((lib) => ({
+        ...lib,
+        creatives: lib.creatives.map((f) => (f.code === c.code ? { ...f, usage } : f)),
+      }));
+      sendJson(`/api/creatives/concepts/${c.code}`, "PATCH", { usage })
+        .catch((e) => fail("Could not update", e))
+        .finally(() => void refresh());
+    },
+    onTrash: (c) => {
+      setTrashed(c.code, true);
+      toast({
+        title: `${creativeCode(c.code)} moved to trash`,
+        description: `Deleted for good after ${CREATIVE_TRASH_DAYS} days.`,
+        action: (
+          <Button size="sm" onClick={() => setTrashed(c.code, false)}>
+            Undo
+          </Button>
+        ),
+      });
+    },
+    onRestore: (c) => {
+      setTrashed(c.code, false);
+      toast({ title: `${creativeCode(c.code)} restored`, description: `Back in ${c.product}.` });
+    },
+    onDeleteForever: (c) => {
+      if (!window.confirm(`Delete ${creativeCode(c.code)} · ${c.angle} for good? Every version and file is removed.`)) {
+        return;
+      }
+      sendJson(`/api/creatives/concepts/${c.code}`, "DELETE")
+        .then(refresh)
+        .catch((e) => fail("Could not delete", e));
+    },
+    onEmptyTrash: () => {
+      if (!window.confirm(`Delete the ${trash.length} concept${trash.length > 1 ? "s" : ""} in the trash for good?`)) {
+        return;
+      }
+      sendJson("/api/creatives/trash", "DELETE")
+        .then(refresh)
+        .catch((e) => fail("Could not empty the trash", e));
     },
     onEdit: setEditConcept,
     onNewVersion: (c) => setUpload({ mode: "version", base: c.versions[0].files[0] }),
@@ -290,6 +345,7 @@ export function CreativesManager({ initial }: { initial: CreativeLibrary }) {
           <CreativesExplorer
             library={library}
             concepts={concepts}
+            trash={trash}
             statusOf={statusOf}
             trendOf={trendOf}
             hasMetrics={hasMetrics}

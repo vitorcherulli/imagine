@@ -24,7 +24,7 @@ import { groupConcepts, nameOf, type CreativeLibrary } from "@/components/creati
 /** Where the media comes from: a stored output the server can look up, or a file rendered in the browser. */
 export type CreativeSource =
   | { type: "variation"; id: string; hasImage: boolean; hasVideo: boolean }
-  | { type: "export" | "asset" | "dubbing" | "image-chat"; id: string; isVideo: boolean }
+  | { type: "export" | "asset" | "dubbing" | "image-chat" | "swap"; id: string; isVideo: boolean }
   | { type: "file"; getFile: () => Promise<File>; sourceRef?: string; isVideo: boolean };
 
 const FORMAT_OPTIONS = (Object.keys(CREATIVE_FORMATS) as CreativeFormat[]).map((f) => ({ value: f, label: f }));
@@ -117,7 +117,10 @@ function AddToCreativesDialog({
       .catch(() => setLibrary(null));
   }, []);
 
-  const concepts = React.useMemo(() => (library ? groupConcepts(library.creatives) : []), [library]);
+  const concepts = React.useMemo(
+    () => (library ? groupConcepts(library.creatives).filter((c) => !c.trashedAt) : []),
+    [library],
+  );
   const folders = React.useMemo(
     () => (library ? [...new Set([...library.folders, ...concepts.map((c) => c.product)])].sort() : []),
     [library, concepts],

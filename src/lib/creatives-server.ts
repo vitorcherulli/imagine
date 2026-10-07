@@ -3,12 +3,13 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { createId } from "@paralleldrive/cuid2";
-import { and, desc, eq, isNull, max } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, lt, max } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import type { Creative, CreativeMetric } from "@/lib/db/schema";
 import { hasFfmpeg, readImagePixelSize } from "@/lib/ffmpeg";
 import { deleteCreativeMedia, saveCreativeBuffer, withCacheBuster } from "@/lib/storage";
 import {
+  CREATIVE_TRASH_DAYS,
   buildCreativeName,
   parseMetaAdsCsv,
   ratioFromSize,
@@ -350,12 +351,12 @@ export async function renameFolder(userId: string, from: string, rawTo: string):
 }
 
 export async function deleteFolder(userId: string, name: string): Promise<void> {
-  const [inside] = await db
-    .select({ id: schema.creatives.id })
+  const inside = await db
+    .select({ trashedAt: schema.creatives.trashedAt })
     .from(schema.creatives)
-    .where(and(eq(schema.creatives.userId, userId), eq(schema.creatives.product, name)))
-    .limit(1);
-  if (inside) throw new Error("Move or delete the concepts inside first");
+    .where(and(eq(schema.creatives.userId, userId), eq(schema.creatives.product, name)));
+  if (inside.some((c) => !c.trashedAt)) throw new Error("Move or delete the concepts inside first");
+  if (inside.length) throw new Error("Some concepts of this folder are in the trash — empty the trash first");
   await db
     .delete(schema.creativeFolders)
     .where(and(eq(schema.creativeFolders.userId, userId), eq(schema.creativeFolders.name, name)));
@@ -367,6 +368,8 @@ export type ConceptPatch = {
   hook?: string;
   notes?: string;
   status?: string | null;
+  usage?: string | null;
+  trashed?: boolean;
 };
 
 export async function updateConcept(userId: string, code: number, patch: ConceptPatch): Promise<number> {
@@ -382,12 +385,35 @@ export async function updateConcept(userId: string, code: number, patch: Concept
   if (patch.hook !== undefined) set.hook = patch.hook.trim().slice(0, 300);
   if (patch.notes !== undefined) set.notes = patch.notes.trim().slice(0, 2000);
   if (patch.status !== undefined) set.status = patch.status;
+  if (patch.usage !== undefined) set.usage = patch.usage;
+  if (patch.trashed !== undefined) set.trashedAt = patch.trashed ? new Date() : null;
   const rows = await db
     .update(schema.creatives)
     .set(set)
     .where(and(eq(schema.creatives.userId, userId), eq(schema.creatives.code, code)))
     .returning({ id: schema.creatives.id });
   return rows.length;
+}
+
+/** Deletes every version and size of one concept, files included. */
+export async function deleteConcept(userId: string, code: number): Promise<number> {
+  const files = await db
+    .select()
+    .from(schema.creatives)
+    .where(and(eq(schema.creatives.userId, userId), eq(schema.creatives.code, code)));
+  for (const f of files) await deleteCreative(f);
+  return files.length;
+}
+
+/** Deletes trashed concepts — all of them, or only those trashed before `before`. */
+export async function emptyTrash(userId: string, before?: Date): Promise<number> {
+  const c = schema.creatives;
+  const files = await db
+    .select()
+    .from(c)
+    .where(and(eq(c.userId, userId), before ? lt(c.trashedAt, before) : isNotNull(c.trashedAt)));
+  for (const f of files) await deleteCreative(f);
+  return files.length;
 }
 
 export type CreativeLibrary = {
@@ -418,6 +444,9 @@ function aggregatePeriod(rows: CreativeMetric[], known: Set<number>) {
 
 export async function loadCreativeLibrary(userId: string): Promise<CreativeLibrary> {
   await adoptLegacyMetrics(userId);
+  await emptyTrash(userId, new Date(Date.now() - CREATIVE_TRASH_DAYS * 86_400_000)).catch((err) => {
+    console.warn("[creatives] trash purge failed", err);
+  });
   const [creatives, metricRows, folderRows, importRows] = await Promise.all([
     db
       .select()

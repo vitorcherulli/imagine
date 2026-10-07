@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { tryUser } from "@/lib/auth";
-import { filterVariationCapable, getModelCatalog } from "@/lib/model-catalog-server";
+import { filterSwapCapable, filterVariationCapable, getModelCatalog } from "@/lib/model-catalog-server";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +15,11 @@ export async function GET(req: NextRequest) {
   const models = await getModelCatalog(kind);
   const usage = req.nextUrl.searchParams.get("for");
   return NextResponse.json({
-    models: usage === "variations" ? filterVariationCapable(kind, models) : models,
+    models:
+      usage === "variations"
+        ? filterVariationCapable(kind, models)
+        : usage === "swap" && kind === "video"
+          ? filterSwapCapable(models)
+          : models,
   });
 }
