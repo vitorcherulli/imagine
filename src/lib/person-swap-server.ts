@@ -4,7 +4,11 @@ import { db, schema } from "@/lib/db";
 import type { PersonSwap, PersonSwapItem, Scenario } from "@/lib/db/schema";
 import { generateImage } from "@/lib/openrouter/images";
 import { openRouterHeaders } from "@/lib/openrouter/client";
-import { submitVideoWithCapacityRetry, type VideoReferenceInput } from "@/lib/openrouter/videos";
+import {
+  isVideoKeyframeRejectedError,
+  submitVideoWithCapacityRetry,
+  type VideoReferenceInput,
+} from "@/lib/openrouter/videos";
 import { chatCompletion } from "@/lib/openrouter/llm";
 import { convertSpeechToVoice } from "@/lib/elevenlabs/speech-to-speech";
 import {
@@ -501,6 +505,33 @@ async function renderVideo(
   return withCacheBuster(await savePersonSwapBuffer(swap.userId, swap.id, source.filename, buf));
 }
 
+/**
+ * ByteDance (Seedance) refuses photoreal faces / reference photos of real people outright;
+ * Runway Aleph edits footage of real people. Re-render a refused part on Aleph instead of
+ * failing the whole swap. Refused jobs are not billed.
+ */
+async function renderVideoWithLikenessFallback(
+  swap: PersonSwap,
+  item: PersonSwapItem,
+  scenario: Scenario | null,
+  model: string,
+  info: CatalogModel,
+  source: RenderPart,
+): Promise<string> {
+  try {
+    return await renderVideo(swap, item, scenario, model, info, source);
+  } catch (err) {
+    if (model === DEFAULT_PERSON_SWAP_MODEL || !isVideoKeyframeRejectedError(err)) throw err;
+    console.warn(
+      `[person-swap] ${model} refused the face for item ${item.id} — re-rendering on ${DEFAULT_PERSON_SWAP_MODEL}`,
+    );
+    const fallbackInfo = await videoModelInfo(DEFAULT_PERSON_SWAP_MODEL);
+    const url = await renderVideo(swap, item, scenario, DEFAULT_PERSON_SWAP_MODEL, fallbackInfo, source);
+    await setItem(item.id, { videoModel: DEFAULT_PERSON_SWAP_MODEL });
+    return url;
+  }
+}
+
 const PARALLEL_PARTS = 3;
 
 function sameSegmentPlan(a: SwapSegment[], b: Array<{ start: number; seconds: number }>): boolean {
@@ -570,7 +601,7 @@ async function renderInParts(
           `source-part-${i + 1}-of-${total}.mp4`,
           clips[i]!,
         );
-        s.rawVideoUrl = await renderVideo(swap, item, scenario, model, info, {
+        s.rawVideoUrl = await renderVideoWithLikenessFallback(swap, item, scenario, model, info, {
           sourceUrl,
           seconds: s.seconds,
           keyframeUrl: s.keyframeUrl,
@@ -697,7 +728,7 @@ async function runSwapItem(
               await cutVideoSegment(await readMediaBuffer(swap.sourceUrl), 0, seconds),
             )
           : swap.sourceUrl;
-      rawVideoUrl = await renderVideo(swap, current, scenario, model, info, {
+      rawVideoUrl = await renderVideoWithLikenessFallback(swap, current, scenario, model, info, {
         sourceUrl,
         seconds,
         keyframeUrl: swapAcceptsReferences(model) ? current.keyframeUrl : null,
