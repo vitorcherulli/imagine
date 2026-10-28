@@ -33,3 +33,5 @@ papo-dub/__pycache__/
 trabalho-compact/
 *.m4a
 __pycache__/
+papo-dub/venv/
+venv/
