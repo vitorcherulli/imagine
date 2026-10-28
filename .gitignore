@@ -24,3 +24,12 @@ tsconfig.tsbuildinfo
 .cursor/
 **/__pycache__/
 *.pyc
+
+# trabalho local (mídia e caches)
+.libs/
+papo-dub/**/*.wav
+papo-dub/clips/
+papo-dub/__pycache__/
+trabalho-compact/
+*.m4a
+__pycache__/

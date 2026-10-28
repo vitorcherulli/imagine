@@ -267,6 +267,13 @@ export function Sidebar({
               icon={<MessagesSquare className="h-3.5 w-3.5" />}
             />
             <SidebarNavLink
+              href="/motion"
+              title="Motion design — peças animadas com preview e chat"
+              label="Motion design"
+              active={pathname?.startsWith("/motion")}
+              icon={<Clapperboard className="h-3.5 w-3.5" />}
+            />
+            <SidebarNavLink
               href="/swap"
               title="Person swap — put another person in a video"
               label="Person swap"
@@ -357,6 +364,14 @@ export function Sidebar({
             collapsed
             active={pathname?.startsWith("/image-chat")}
             icon={<MessagesSquare className="h-4 w-4" />}
+          />
+          <SidebarNavLink
+            href="/motion"
+            title="Motion design"
+            label="Motion design"
+            collapsed
+            active={pathname?.startsWith("/motion")}
+            icon={<Clapperboard className="h-4 w-4" />}
           />
           <SidebarNavLink
             href="/swap"

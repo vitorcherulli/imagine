@@ -9,6 +9,9 @@ const nextConfig = {
       "drizzle-orm",
       "postgres",
       "@aws-sdk/client-s3",
+      "@remotion/bundler",
+      "@remotion/renderer",
+      "esbuild",
     ],
   },
   images: {

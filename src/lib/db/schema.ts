@@ -832,6 +832,28 @@ export const dubbingSegmentLocales = sqliteTable("dubbing_segment_locales", {
     .default(sql`(unixepoch())`),
 });
 
+/** Peças de Motion Design animado (template parametrizável + histórico de chat). */
+export const motionDesigns = sqliteTable("motion_designs", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  title: text("title").notNull().default("Peça de motion"),
+  templateId: text("template_id").notNull().default("bold-intro"),
+  /** JSON MotionProps — estado editável da peça. */
+  props: text("props").notNull().default("{}"),
+  /** JSON MotionChatMessage[] — histórico de edição por chat. */
+  messages: text("messages").notNull().default("[]"),
+  /** Último MP4 renderizado. */
+  outputUrl: text("output_url"),
+  thumbUrl: text("thumb_url"),
+  status: text("status").notNull().default("draft"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
 export type ProjectFolder = typeof projectFolders.$inferSelect;
 export type NewProjectFolder = typeof projectFolders.$inferInsert;
 export type MediaLibraryFolder = typeof mediaLibraryFolders.$inferSelect;
@@ -853,6 +875,8 @@ export type NewSocialArtBrandKit = typeof socialArtBrandKits.$inferInsert;
 export type YoutubeMetadata = typeof youtubeMetadata.$inferSelect;
 export type Export = typeof exports.$inferSelect;
 export type ProjectDna = typeof projectDna.$inferSelect;
+export type MotionDesign = typeof motionDesigns.$inferSelect;
+export type NewMotionDesign = typeof motionDesigns.$inferInsert;
 export type NewProjectDna = typeof projectDna.$inferInsert;
 export type Avatar = typeof avatars.$inferSelect;
 export type NewAvatar = typeof avatars.$inferInsert;

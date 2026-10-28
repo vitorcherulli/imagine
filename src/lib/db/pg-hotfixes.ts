@@ -447,6 +447,20 @@ export const PG_SCHEMA_HOTFIXES = [
     "updated_at" timestamp DEFAULT now() NOT NULL
   )`,
   `CREATE INDEX IF NOT EXISTS "photo_batch_items_batch" ON "photo_batch_items" ("batch_id", "position")`,
+  `CREATE TABLE IF NOT EXISTS "motion_designs" (
+    "id" text PRIMARY KEY NOT NULL,
+    "user_id" text NOT NULL,
+    "title" text DEFAULT 'Peça de motion' NOT NULL,
+    "template_id" text DEFAULT 'bold-intro' NOT NULL,
+    "props" text DEFAULT '{}' NOT NULL,
+    "messages" text DEFAULT '[]' NOT NULL,
+    "output_url" text,
+    "thumb_url" text,
+    "status" text DEFAULT 'draft' NOT NULL,
+    "created_at" timestamp DEFAULT now() NOT NULL,
+    "updated_at" timestamp DEFAULT now() NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS "motion_designs_user" ON "motion_designs" ("user_id", "updated_at")`,
 ] as const;
 
 export async function applyPgSchemaHotfixes(client: postgres.Sql): Promise<void> {

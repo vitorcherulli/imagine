@@ -369,6 +369,20 @@ export const SQLITE_TABLE_HOTFIXES = [
     FOREIGN KEY (batch_id) REFERENCES photo_batches(id) ON UPDATE no action ON DELETE cascade
   )`,
   `CREATE INDEX IF NOT EXISTS photo_batch_items_batch ON photo_batch_items (batch_id, position)`,
+  `CREATE TABLE IF NOT EXISTS motion_designs (
+    id text PRIMARY KEY NOT NULL,
+    user_id text NOT NULL,
+    title text DEFAULT 'Peça de motion' NOT NULL,
+    template_id text DEFAULT 'bold-intro' NOT NULL,
+    props text DEFAULT '{}' NOT NULL,
+    messages text DEFAULT '[]' NOT NULL,
+    output_url text,
+    thumb_url text,
+    status text DEFAULT 'draft' NOT NULL,
+    created_at integer DEFAULT (unixepoch()) NOT NULL,
+    updated_at integer DEFAULT (unixepoch()) NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS motion_designs_user ON motion_designs (user_id, updated_at)`,
 ] as const;
 
 /** Idempotent ALTERs for columns added after first local deploy. */

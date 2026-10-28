@@ -643,6 +643,21 @@ export const dubbingSegmentLocales = pgTable("dubbing_segment_locales", {
   updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
 });
 
+/** Peças de Motion Design animado (template parametrizável + histórico de chat). */
+export const motionDesigns = pgTable("motion_designs", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  title: text("title").notNull().default("Peça de motion"),
+  templateId: text("template_id").notNull().default("bold-intro"),
+  props: text("props").notNull().default("{}"),
+  messages: text("messages").notNull().default("[]"),
+  outputUrl: text("output_url"),
+  thumbUrl: text("thumb_url"),
+  status: text("status").notNull().default("draft"),
+  createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
+});
+
 export type ProjectFolder = typeof projectFolders.$inferSelect;
 export type NewProjectFolder = typeof projectFolders.$inferInsert;
 export type MediaLibraryFolder = typeof mediaLibraryFolders.$inferSelect;
@@ -665,6 +680,8 @@ export type YoutubeMetadata = typeof youtubeMetadata.$inferSelect;
 export type Export = typeof exports.$inferSelect;
 export type ProjectDna = typeof projectDna.$inferSelect;
 export type NewProjectDna = typeof projectDna.$inferInsert;
+export type MotionDesign = typeof motionDesigns.$inferSelect;
+export type NewMotionDesign = typeof motionDesigns.$inferInsert;
 export type Avatar = typeof avatars.$inferSelect;
 export type NewAvatar = typeof avatars.$inferInsert;
 export type Scenario = typeof scenarios.$inferSelect;
